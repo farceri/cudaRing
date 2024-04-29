@@ -20,9 +20,13 @@ using std::vector;
 using std::string;
 
 struct simControlStruct {
+  enum class simulationEnum {gpu, cpu} simulationType;
+  enum class particleEnum {deformable, rigid} particleType;
   enum class potentialEnum {harmonic, lennardJones, adhesive, wca} potentialType;
-  enum class interactionEnum {vertexVertex, smooth} interactionType;
+  enum class interactionEnum {vertexVertex, cellSmooth, vertexSmooth, all} interactionType;
+  enum class neighborEnum {neighbor, cell, allToAll} neighborType;
   enum class concavityEnum {on, off} concavityType;
+  enum class monomerEnum {harmonic, FENE} monomerType;
 };
 
 // pointer-to-member function call macro
@@ -49,6 +53,8 @@ public:
 
   // variables for CUDA runtime details
   long dimGrid, dimBlock, partDimGrid;
+  dim3 cellDimBlock;
+  dim3 cellDimGrid;
 
   // dpm packing constants
   long nDim;
@@ -78,7 +84,11 @@ public:
   double l1, l2;
   // Lennard-Jones constants
   double LJcutoff, LJecut;
+  // FENE constants
+  double stiff, extSq;
+  // neighbor variables
   double cutoff, cutDistance;
+  long updateCount;
 
   // vertex shape variables
   thrust::device_vector<double> d_rad;
@@ -135,6 +145,21 @@ public:
   thrust::device_vector<long> d_maxNeighborList;
   long maxNeighbors;
 	long neighborListSize;
+  // cell list
+  thrust::host_vector<long> h_header;
+  thrust::host_vector<long> h_linkedList;
+  thrust::host_vector<long> h_cellIndexList;
+  //thrust::host_vector<long> h_cellNeighborList;
+  //thrust::host_vector<long> h_maxCellNeighborList;
+  thrust::device_vector<long> d_header;
+  thrust::device_vector<long> d_linkedList;
+  thrust::device_vector<long> d_cellIndexList;
+  //thrust::device_vector<long> d_cellNeighborList;
+  //thrust::device_vector<long> d_maxCellNeighborList;
+  double cellSize;
+  long numCells;
+  long maxCellNeighbors;
+  long cellNeighborListSize;
 	// particle neighbor list
   thrust::device_vector<long> d_numPartNeighbors;
   thrust::device_vector<long> d_partNeighborList;
@@ -142,6 +167,8 @@ public:
   long partMaxNeighbors;
 	long partNeighborListSize;
   long neighborLimit;
+
+  void printDeviceProperties();
 
   void initShapeVariables(long numVertices_, long numParticles_);
 
@@ -157,6 +184,8 @@ public:
 
   void initNeighbors(long numVertices_);
 
+  double initCells(long numVertices_, double cellSize_);
+
   void initParticleNeighbors(long numParticles_);
 
   void initParticleIdList();
@@ -165,17 +194,31 @@ public:
   void syncSimControlToDevice();
   void syncSimControlFromDevice();
 
+  void setSimulationType(simControlStruct::simulationEnum simulationType_);
+	simControlStruct::simulationEnum getSimulationType();
+
+  void setParticleType(simControlStruct::particleEnum particleType_);
+	simControlStruct::particleEnum getParticleType();
+
   void setPotentialType(simControlStruct::potentialEnum potentialType_);
 	simControlStruct::potentialEnum getPotentialType();
 
   void setInteractionType(simControlStruct::interactionEnum interactionType_);
 	simControlStruct::interactionEnum getInteractionType();
 
+  void setNeighborType(simControlStruct::neighborEnum interactionType_);
+	simControlStruct::neighborEnum getNeighborType();
+
   void setConcavityType(simControlStruct::concavityEnum concavityType_);
 	simControlStruct::concavityEnum getConcavityType();
 
+  void setMonomerType(simControlStruct::monomerEnum monomerType_);
+	simControlStruct::monomerEnum getMonomerType();
+
   void setDimBlock(long dimBlock_);
   long getDimBlock();
+
+  void setCellDimGridBlock();
 
   void setNDim(long nDim_);
   long getNDim();
@@ -204,8 +247,6 @@ public:
   void setVertexRadii(thrust::host_vector<double> &rad_);
   thrust::host_vector<double> getVertexRadii();
 
-  double getMaxRadius();
-
   void setRestAreas(thrust::host_vector<double> &a0_);
   thrust::host_vector<double> getRestAreas();
 
@@ -232,6 +273,8 @@ public:
 
   double getMinVertexRadius();
 
+  double getVertexRadius();
+
   // particle variables
   void calcParticlesShape();
 
@@ -244,6 +287,8 @@ public:
 
   void setParticlePositions(thrust::host_vector<double> &particlePos_);
   thrust::host_vector<double> getParticlePositions();
+
+  void setParticleInitialPositions();
 
   void resetParticleLastPositions();
 
@@ -272,6 +317,8 @@ public:
 
   void resetLastPositions();
 
+  void setInitialPositions();
+
   void setVertexVelocities(thrust::host_vector<double> &vel_);
 	thrust::host_vector<double> getVertexVelocities();
 
@@ -295,6 +342,14 @@ public:
 
   thrust::host_vector<long> getNeighbors();
 
+  thrust::host_vector<long> getLinkedList();
+
+  thrust::host_vector<long> getListHeader();
+
+  thrust::host_vector<long> getCellIndexList();
+
+  //thrust::host_vector<long> getCellNeighborList();
+
   thrust::host_vector<long> getContacts();
 
   void printNeighbors();
@@ -303,13 +358,15 @@ public:
 
   double getPotentialEnergy();
 
-  double getSmoothPotentialEnergy();
-
   double getKineticEnergy();
+
+  double getEnergy();
 
   double getTemperature();
 
   double getTotalEnergy();
+
+  void adjustKineticEnergy(double prevEtot);
 
   double getPhi();
 
@@ -327,11 +384,23 @@ public:
 
   double getMaxDisplacement();
 
-  void setDisplacementCutoff(double cutoff_, double cutDistance_);
+  double setDisplacementCutoff(double cutoff_, double size_);
+
+  void resetUpdateCount();
+
+  long getUpdateCount();
 
   void checkMaxDisplacement();
 
+  void checkDisplacement();
+
+  void checkNeighbors();
+
   double getParticleMaxDisplacement();
+
+  void checkParticleMaxDisplacement();
+
+  void checkParticleNeighbors();
 
   double getDeformableWaveNumber();
 
@@ -393,15 +462,65 @@ public:
 
   void setLJcutoff(double LJcutoff_);
 
+  void setFENEconstants(double stiff_, double ext_);
+
   double setTimeScale(double dt_);
 
   double setTimeStep(double dt_);
 
   void calcForceEnergy();
 
-  void calcRigidForceEnergy();
+  void calcForceEnergyGPU();
+
+  void calcForceEnergyCPU();
+
+  void calcShapeForceEnergy();
+
+  void calcInteraction();
+
+  void setTwoParticleTest(double lx, double ly, double y0, double y1, double vel1);
+
+  void firstUpdate(double timeStep);
+
+  void secondUpdate(double timeStep);
+
+  void testInteraction(double timeStep);
+
+  void firstRigidUpdate(double timeStep);
+
+  void secondRigidUpdate(double timeStep);
+
+  void testRigidInteraction(double timeStep);
+
+  void printTwoParticles();
+
+  double pbcDistance(double x1, double x2, double size);
+
+  void calcVertexVertexInteraction();
+
+  long getPreviousId(long vertexId, long particleId);
+
+  long getNextId(long vertexId, long particleId);
+
+  double getProjection(double* thisPos, double* otherPos, double* previousPos, double length);
+
+  double calcCross(double* thisPos, double* otherPos, double* previousPos);
+
+  void calcSmoothInteraction();
+
+  long getNeighborCellId(long cellIdx, long cellIdy, long dx, long dy);
+
+  void calcCellListSmoothInteraction();
 
   void calcVertexForceTorque();
+
+  void transferForceToParticles();
+
+  void calcVertexSmoothForceTorque();
+
+  void transferSmoothForceToParticles();
+
+  void calcRigidForceEnergy();
 
   void calcStressTensor();
 
@@ -416,21 +535,27 @@ public:
 
   thrust::host_vector<long> getContactVectors(double gapSize);
 
+  void calcNeighbors(double cutDistance);
+
   void calcNeighborList(double cutDistance);
 
   void syncNeighborsToDevice();
+
+  void fillLinkedList();
+
+  void syncLinkedListToDevice();
+
+  //void calcCellNeighborList();
+
+  //void fillCellNeighborList();
+
+  //void syncCellNeighborsToDevice();
 
   void calcParticleNeighborList(double cutDistance);
 
   void syncParticleNeighborsToDevice();
 
   void calcParticleForceEnergy();
-
-  void makeExternalParticleForce(double externalForce);
-
-  void addExternalParticleForce();
-
-  thrust::host_vector<double> getExternalParticleForce();
 
   double getParticleTotalForceMagnitude();
 

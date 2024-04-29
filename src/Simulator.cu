@@ -35,7 +35,7 @@ void Langevin::integrate() {
   updatePosition(0.5 * dpm_->dt);
   updateThermalVel();
   updatePosition(0.5 * dpm_->dt);
-  dpm_->checkMaxDisplacement();
+  dpm_->checkNeighbors();
   dpm_->calcForceEnergy();
   updateVelocity(0.5 * dpm_->dt);
   //conserveMomentum();
@@ -111,7 +111,7 @@ void Langevin2::integrate() {
   updateThermalVel();
   updateVelocity(0.5*dpm_->dt);
   updatePosition(dpm_->dt);
-  dpm_->checkMaxDisplacement();
+  dpm_->checkNeighbors();
   dpm_->calcForceEnergy();
   updateVelocity(0.5*dpm_->dt);
   //conserveMomentum();
@@ -196,7 +196,7 @@ void ActiveLangevin::integrate() {
   updateThermalVel();
   updateVelocity(0.5*dpm_->dt);
   updatePosition(dpm_->dt);
-  dpm_->checkMaxDisplacement();
+  dpm_->checkNeighbors();
   dpm_->calcForceEnergy();
   updateVelocity(0.5*dpm_->dt);
   //conserveMomentum();
@@ -257,7 +257,7 @@ void ActiveLangevin::updateThermalVel() {
 void NVE::integrate() {
   updateVelocity(0.5 * dpm_->dt);
   updatePosition(dpm_->dt);
-  dpm_->checkMaxDisplacement();
+  dpm_->checkNeighbors();
   dpm_->calcForceEnergy();
   updateVelocity(0.5 * dpm_->dt);
   //conserveMomentum();
@@ -267,7 +267,7 @@ void NVE::injectKineticEnergy() {
   // generate random numbers between 0 and Tscale for thermal noise
   thrust::counting_iterator<long> index_sequence_begin(lrand48());
   thrust::transform(index_sequence_begin, index_sequence_begin + dpm_->numVertices * dpm_->nDim, dpm_->d_vel.begin(), gaussNum(0.f,noiseVar));
-	double* vel = thrust::raw_pointer_cast(&(dpm_->d_vel[0]));
+  double *vel = thrust::raw_pointer_cast(&(dpm_->d_vel[0]));
   kernelConserveVertexMomentum<<<1, dpm_->dimBlock>>>(vel);
 }
 
@@ -275,7 +275,7 @@ void NVE::injectKineticEnergy() {
 void Brownian::integrate() {
   updateVelocity(dpm_->dt);
   updatePosition(dpm_->dt);
-  dpm_->checkMaxDisplacement();
+  dpm_->checkNeighbors();
   dpm_->calcForceEnergy();
   //conserveMomentum();
 }
@@ -296,7 +296,7 @@ void Brownian::updateVelocity(double timeStep) {
 void ActiveBrownian::integrate() {
   updateVelocity(dpm_->dt);
   updatePosition(dpm_->dt);
-  dpm_->checkMaxDisplacement();
+  dpm_->checkNeighbors();
   dpm_->calcForceEnergy();
   //conserveMomentum();
 }
@@ -327,7 +327,7 @@ void ActiveBrownian::updateVelocity(double timeStep) {
 void ActiveBrownianPlastic::integrate() {
   updateVelocity(dpm_->dt);
   updatePosition(dpm_->dt);
-  dpm_->checkMaxDisplacement();
+  dpm_->checkNeighbors();
   dpm_->calcForceEnergy();
   //conserveMomentum();
 }
@@ -399,7 +399,7 @@ void RigidLangevin::integrate() {
   updatePosition(dpm_->dt);
   dpm_->translateVertices();
   dpm_->rotateVertices();
-  dpm_->checkMaxDisplacement();
+  dpm_->checkNeighbors();
   dpm_->calcRigidForceEnergy();
   updateVelocity(0.5*dpm_->dt);
 }
@@ -475,7 +475,7 @@ void RigidNVE::integrate() {
   updatePosition(dpm_->dt);
   dpm_->translateVertices();
 	dpm_->rotateVertices();
-  dpm_->checkMaxDisplacement();
+  dpm_->checkNeighbors();
   dpm_->calcRigidForceEnergy();
   updateVelocity(0.5 * dpm_->dt);
 }

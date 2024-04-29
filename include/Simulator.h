@@ -10,6 +10,13 @@
 #define SIMULATOR_H
 
 #include "DPM2D.h"
+#include "defs.h"
+#include <thrust/device_vector.h>
+#include <thrust/transform.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/permutation_iterator.h>
 
 class DPM2D;
 
@@ -98,7 +105,7 @@ class NVE: public Langevin
 public:
   NVE() = default;
   NVE(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
-
+  
   virtual void injectKineticEnergy();
   virtual void integrate();
 };

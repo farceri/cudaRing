@@ -10,6 +10,11 @@
 #include "DPM2D.h"
 #include "defs.h"
 #include <thrust/device_vector.h>
+#include <thrust/transform.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/permutation_iterator.h>
 
 class DPM2D;
 

@@ -32,13 +32,14 @@ int main(int argc, char **argv) {
   long step = 0, initialStep = 0, multiple = 1, saveFreq = 1, firstDecade = 0, updateCount = 0;
   double cutDistance = 1, waveQ, sigma, damping, inertiaOverDamping = atof(argv[6]);
   double timeUnit, timeStep = atof(argv[2]), Tinject = atof(argv[3]);
-  double ea = 1e05, el = 100, eb = 1, ec = 1, cutoff, maxDelta;
+  double ea = 1e05, el = 1, eb = 1, ec = 1, cutoff, maxDelta;
   std::string outDir, energyFile, currentDir, inDir = argv[1], dirSample, whichDynamics = "langevin/";
   dirSample = whichDynamics + "T" + argv[3] + "/";
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
   dpm.setPotentialType(simControlStruct::potentialEnum::wca);
   dpm.setInteractionType(simControlStruct::interactionEnum::smooth);
+  dpm.setConcavityType(simControlStruct::concavityEnum::off);
   ioDPMFile ioDPM(&dpm);
   // set input and output
   if (readAndSaveSameDir == true) {//keep running the same dynamics
@@ -89,9 +90,10 @@ int main(int argc, char **argv) {
   dpm.calcNeighborList(cutDistance);
   dpm.calcForceEnergy();
   dpm.initLangevin2(Tinject, damping, readState);
-  dpm.resetLastPositions();
-  cutoff = (1 + cutDistance) * dpm.getMeanVertexRadius();
+  cutoff = (1 + cutDistance) * 2*dpm.getMeanVertexRadius();
   dpm.setDisplacementCutoff(cutoff, cutDistance);
+  dpm.resetUpdateCount();
+  dpm.setParticleInitialPositions();
   waveQ = dpm.getDeformableWaveNumber();
   // run integrator
   while(step != maxStep) {
@@ -100,10 +102,17 @@ int main(int argc, char **argv) {
       ioDPM.saveEnergy(step, timeStep);
       if(step % checkPointFreq == 0) {
         cout << "Langevin: current step: " << step;
-        cout << " E/N: " << (dpm.getSmoothPotentialEnergy() + dpm.getKineticEnergy()) / numParticles;
+        cout << " E/N: " << (dpm.getPotentialEnergy() + dpm.getKineticEnergy()) / numParticles;
         cout << " T: " << dpm.getTemperature();
         cout << " ISF: " << dpm.getParticleISF(waveQ);
-        cout << " phi: " << dpm.getPhi() << endl;
+        cout << " phi: " << dpm.getPhi();
+        updateCount = dpm.getUpdateCount();
+        if(step != 0 && updateCount > 0) {
+          cout << " number of updates: " << updateCount << " frequency " << checkPointFreq / updateCount << endl;
+        } else {
+          cout << " no updates" << endl;
+        }
+        dpm.resetUpdateCount();
         if(saveFinal == true) {
       	  ioDPM.savePacking(outDir);
         }

@@ -140,7 +140,7 @@ int main(int argc, char **argv) {
         ioDPM.saveEnergy(step, timeStep);
         if(step % checkPointFreq == 0) {
           cout << "Test: current step: " << step;
-          cout << " E: " << (dpm.getSmoothPotentialEnergy() + dpm.getKineticEnergy()) / numParticles;
+          cout << " E: " << (dpm.getPotentialEnergy() + dpm.getKineticEnergy()) / numParticles;
           cout << " T: " << dpm.getTemperature() << endl;
           if(saveFinal == true) {
             ioDPM.saveConfiguration(outDir);

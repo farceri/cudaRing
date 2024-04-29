@@ -60,11 +60,14 @@ public:
     }
   }
 
-  void saveEnergy(long step, double timeStep) {
+  void saveEnergy(long step, double timeStep, long numVertices) {
+    double epot = dpm_->getPotentialEnergy();
+    double ekin = dpm_->getKineticEnergy();
+    double etot = epot + ekin;
     energyFile << step + 1 << "\t" << (step + 1) * timeStep << "\t";
-    energyFile << setprecision(precision) << dpm_->getPotentialEnergy() << "\t";
-    energyFile << setprecision(precision) << dpm_->getKineticEnergy() << "\t";
-    energyFile << setprecision(precision) << dpm_->getTemperature() << "\t";
+    energyFile << setprecision(precision) << epot / numVertices << "\t";
+    energyFile << setprecision(precision) << ekin / numVertices << "\t";
+    energyFile << setprecision(precision) << etot / numVertices << "\t";
     energyFile << setprecision(precision) << dpm_->getPhi() << endl;
   }
 
@@ -127,6 +130,15 @@ public:
     outputFile.close();
   }
 
+ void save1DSTDFile(string fileName, std::vector<long> data) {
+    this->openOutputFile(fileName);
+    long numRows = data.size();
+    for (long row = 0; row < numRows; row++) {
+      //sprintf(outputFile, "%ld \n", data[row]);
+      outputFile << setprecision(precision) << data[row] << endl;
+    }
+    outputFile.close();
+  }
 
   thrust::host_vector<double> read1DFile(string fileName, long numRows) {
     thrust::host_vector<double> data;
@@ -175,6 +187,35 @@ public:
         outputFile << setprecision(precision) << data[row * numCols + col] << "\t";
       }
       outputFile << endl;
+    }
+    outputFile.close();
+  }
+
+  void save2DIndexFile(string fileName, thrust::host_vector<long> data, long numCols) {
+    this->openOutputFile(fileName);
+    if(numCols != 0) {
+      long numRows = int(data.size()/numCols);
+      for (long row = 0; row < numRows; row++) {
+        for(long col = 0; col < numCols; col++) {
+          outputFile << data[row * numCols + col] << "\t";
+        }
+        outputFile << endl;
+      }
+      outputFile.close();
+    } else {
+      cout << "FileIO::save2DIndexFile:: numCols is equal to zero - no data are stored" << endl;
+    }
+  }
+
+  void save3DIndexFile(string fileName, thrust::host_vector<long> data, long numRowx, long numRowy, long numCols) {
+    this->openOutputFile(fileName);
+    for (long rowx = 0; rowx < numRowx; rowx++) {
+      for (long rowy = 0; rowy < numRowy; rowy++) {
+        for(long col = 0; col < numCols; col++) {
+          outputFile << data[(rowx * numRowx + rowy) * numCols + col] << "\t";
+        }
+        outputFile << endl;
+      }
     }
     outputFile.close();
   }
@@ -228,7 +269,7 @@ public:
     dpm_->setRestAngles(theta0_);
     // set length scales
     dpm_->setLengthScale();
-    cout << "FileIO::readPackingFromDirectory: preferred phi: " << dpm_->getPreferredPhi() << endl;
+    cout << "FileIO::readPackingFromDirectory: preferred phi: " << dpm_->getPreferredPhi() << " box-Lx: " << boxSize_[0] << ", Ly: " << boxSize_[1] << endl;
     dpm_->calcParticlesShape();
   }
 
@@ -257,6 +298,7 @@ public:
     save1DFile(dirName + "restLengths.dat", dpm_->getRestLengths());
     save1DFile(dirName + "restAngles.dat", dpm_->getRestAngles());
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
+    save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
     save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
     save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
   }
@@ -276,6 +318,7 @@ public:
   void saveState(string dirName) {
     save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
+    save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
     save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
     save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
   }
@@ -283,6 +326,17 @@ public:
   void saveContacts(string dirName) {
     dpm_->calcContacts(0);
     save2DFile(dirName + "contacts.dat", dpm_->getContacts(), dpm_->contactLimit);
+  }
+
+  void saveNeighbors(string dirName) {
+    if(dpm_->simControl.neighborType == simControlStruct::neighborEnum::neighbor) {
+      save2DIndexFile(dirName + "neighborList.dat", dpm_->getNeighbors(), dpm_->neighborListSize);
+    } else if(dpm_->simControl.neighborType == simControlStruct::neighborEnum::cell) {
+      save1DIndexFile(dirName + "linkedList.dat", dpm_->getLinkedList());
+      save1DIndexFile(dirName + "listHeader.dat", dpm_->getListHeader());
+      save2DIndexFile(dirName + "cellIndexList.dat", dpm_->getCellIndexList(), dpm_->nDim);
+      //save3DIndexFile(dirName + "cellNeighborList.dat", dpm_->getCellNeighborList(), dpm_->numCells, dpm_->numCells, dpm_->cellNeighborListSize);
+    }
   }
 
   void saveConfiguration(string dirName) {
