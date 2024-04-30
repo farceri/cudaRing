@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
   bool readState = true, logSave, linSave = false, saveFinal = true;
-  long numParticles = atof(argv[7]), nDim = 2, numVertexPerParticle = 32;
+  long numParticles = atof(argv[7]), nDim = 2, numVertexPerParticle = 32, numVertices;
   long maxStep = atof(argv[4]), checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10);
   long step = 0, initialStep = 0, multiple = 1, saveFreq = 1, firstDecade = 0, updateCount = 0;
   double cutDistance = 1, waveQ, sigma, damping, inertiaOverDamping = atof(argv[6]);
@@ -74,6 +74,7 @@ int main(int argc, char **argv) {
   if(readState == true) {
     ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
   }
+  numVertices = dpm.getNumVertices();
   // output file
   energyFile = outDir + "energy.dat";
   ioDPM.openEnergyFile(energyFile);
@@ -99,7 +100,7 @@ int main(int argc, char **argv) {
   while(step != maxStep) {
     dpm.langevin2Loop();
     if(step % linFreq == 0) {
-      ioDPM.saveEnergy(step, timeStep);
+      ioDPM.saveDeformableEnergy(step, timeStep, numVertices);
       if(step % checkPointFreq == 0) {
         cout << "Langevin: current step: " << step;
         cout << " E/N: " << (dpm.getPotentialEnergy() + dpm.getKineticEnergy()) / numParticles;

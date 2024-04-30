@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
     }
     cout << "FIRE: iteration: " << iteration;
     cout << " maxUnbalancedForce: " << setprecision(precision) << dpm.getParticleMaxUnbalancedForce();
-    cout << " energy: " << setprecision(precision) << dpm.getParticleEnergy() << endl;
+    cout << " energy: " << setprecision(precision) << dpm.getParticlePotentialEnergy() << endl;
     currentDir = outDir + "/sp/";
     std::experimental::filesystem::create_directory(currentDir);
     ioDPM.saveParticlePacking(currentDir);

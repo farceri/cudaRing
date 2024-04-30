@@ -58,9 +58,6 @@ __constant__ double d_cellSize;
 __constant__ long* d_headerPtr;
 __constant__ long* d_linkedListPtr;
 __constant__ long* d_cellIndexListPtr;
-//__constant__ long* d_maxCellNeighborListPtr;
-//__constant__ long d_cellNeighborListSize;
-//__constant__ long d_maxCellNeighbors;
 
 // particle neighborList
 __constant__ long* d_partNeighborListPtr;
@@ -841,7 +838,7 @@ inline __device__ double checkAngle(double angle, double limit) {
 __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos, double* force, double* pEnergy) {
 	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
-		thread_block block = this_thread_block();
+		//thread_block block = this_thread_block();
 		auto otherRad = 0.0;
 		auto interaction = 0.0;
 		double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
@@ -868,59 +865,58 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 				if(projection > 0 && projection <= 1) {
 					getProjectionPos(previousPos, segment, projPos, projection);
 					interaction = calcVertexSegmentInteraction(thisPos, projPos, otherPos, previousPos, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim], &force[previousId*d_nDim]);
-					atomicAdd(&pEnergy[particleId], 0.5 * interaction);
-					atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
-					block.sync();
-				}
-				auto secondPreviousId = getPreviousId(previousId, otherParticleId);
-				getVertexPos(secondPreviousId, pos, secondPreviousPos);
-				getDelta(secondPreviousPos, previousPos, previousSegment);
-				auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, previousSegment);
-				switch (d_simControl.concavityType) {
-					case simControlStruct::concavityEnum::off:
-					if(projection <= 0 && previousProj > 1) {
-						interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-						atomicAdd(&pEnergy[particleId], 0.5 * interaction);
-						atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
-						block.sync();
-					}
-					break;
-					case simControlStruct::concavityEnum::on:
-					// check if the vertex-vertex interaction is concave or convex
-					getDelta(thisPos, previousPos, interSegment);
-					auto endEndAngle = atan2(interSegment[0]*segment[1] - interSegment[1]*segment[0], interSegment[0]*segment[0] + interSegment[1]*segment[1]);
-					checkAngle(endEndAngle, PI/2);
-					auto endCapAngle = atan2(previousSegment[0]*segment[1] - previousSegment[1]*segment[0], previousSegment[0]*segment[0] + previousSegment[1]*segment[1]);
-					checkAngle(endCapAngle, PI);
-					auto isCapConvexInteraction = (endEndAngle >= 0 && endEndAngle <= endCapAngle);
-					auto isCapConcaveInteraction = (endCapAngle < 0 && endEndAngle > (PI - fabs(endCapAngle)) && endEndAngle < PI);
-					//isConcaveInteraction = false;
-					auto isCapInteraction = (isCapConvexInteraction || isCapConcaveInteraction);
-					// check if the interaction is inverse
-					auto inverseEndEndAngle = (endEndAngle - 2*PI * (endEndAngle > PI));
-					auto isConcaveInteraction = (endCapAngle < 0 && inverseEndEndAngle < 0 && inverseEndEndAngle >= endCapAngle);
-					// endEndAngle for other end of the segment
-					endEndAngle = PI - endEndAngle + fabs(endCapAngle);
-					endEndAngle -= 2*PI * (endEndAngle > 2*PI);
-					endEndAngle += 2*PI * (endEndAngle < 0);
-					auto isInverseInteraction = (isConcaveInteraction || (endCapAngle > 0 && (endEndAngle < endCapAngle)));
-					if((projection <= 0 && isCapInteraction) || (projection > 0 && isInverseInteraction)) {
-						if(isInverseInteraction) {
-							interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-							atomicAdd(&pEnergy[particleId], 0.5 * interaction);
-							atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
-							block.sync();
-						} else if(previousProj > 1) {
+					atomicAdd(&pEnergy[particleId], interaction);
+					atomicAdd(&pEnergy[otherParticleId], interaction);
+				} else if(projection <= 0) {
+					auto secondPreviousId = getPreviousId(previousId, otherParticleId);
+					getVertexPos(secondPreviousId, pos, secondPreviousPos);
+					getDelta(secondPreviousPos, previousPos, previousSegment);
+					auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, previousSegment);
+					switch (d_simControl.concavityType) {
+						case simControlStruct::concavityEnum::off:
+						if(previousProj > 1) {
 							interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-							atomicAdd(&pEnergy[particleId], 0.5 * interaction);
-							atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
-							block.sync();
+							atomicAdd(&pEnergy[particleId], interaction);
+							atomicAdd(&pEnergy[otherParticleId], interaction);
 						}
+						break;
+						case simControlStruct::concavityEnum::on:
+						// check if the vertex-vertex interaction is concave or convex
+						getDelta(thisPos, previousPos, interSegment);
+						auto endEndAngle = atan2(interSegment[0]*segment[1] - interSegment[1]*segment[0], interSegment[0]*segment[0] + interSegment[1]*segment[1]);
+						checkAngle(endEndAngle, PI/2);
+						auto endCapAngle = atan2(previousSegment[0]*segment[1] - previousSegment[1]*segment[0], previousSegment[0]*segment[0] + previousSegment[1]*segment[1]);
+						checkAngle(endCapAngle, PI);
+						auto isCapConvexInteraction = (endEndAngle >= 0 && endEndAngle <= endCapAngle);
+						auto isCapConcaveInteraction = (endCapAngle < 0 && endEndAngle > (PI - fabs(endCapAngle)) && endEndAngle < PI);
+						//isConcaveInteraction = false;
+						auto isCapInteraction = (isCapConvexInteraction || isCapConcaveInteraction);
+						// check if the interaction is inverse
+						auto inverseEndEndAngle = (endEndAngle - 2*PI * (endEndAngle > PI));
+						auto isConcaveInteraction = (endCapAngle < 0 && inverseEndEndAngle < 0 && inverseEndEndAngle >= endCapAngle);
+						// endEndAngle for other end of the segment
+						endEndAngle = PI - endEndAngle + fabs(endCapAngle);
+						endEndAngle -= 2*PI * (endEndAngle > 2*PI);
+						endEndAngle += 2*PI * (endEndAngle < 0);
+						auto isInverseInteraction = (isConcaveInteraction || (endCapAngle > 0 && (endEndAngle < endCapAngle)));
+						if((projection <= 0 && isCapInteraction) || (projection > 0 && isInverseInteraction)) {
+							if(isInverseInteraction) {
+								interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+								atomicAdd(&pEnergy[particleId], 0.5 * interaction);
+								atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
+							} else if(previousProj > 1) {
+								interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+								atomicAdd(&pEnergy[particleId], 0.5 * interaction);
+								atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
+							}
+						}
+						break;
 					}
-					break;
 				}
 			}
 		}
+	//__syncthreads();
+	//block.sync();
   	}
 }
 
@@ -964,7 +960,6 @@ __global__ void kernelCalcCellListSmoothInteraction(const double* rad, const dou
   	if (cellIdx < d_numCells && cellIdy < d_numCells) {
 		auto cellId = cellIdx * d_numCells + cellIdy;
 		//printf("cellId: %ld\n", cellId);
-		thread_block block = this_thread_block();
 		auto interaction = 0.0;
 		double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
 		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM], interSegment[MAXDIM], relSegment[MAXDIM];// relPos[MAXDIM]
@@ -1000,63 +995,62 @@ __global__ void kernelCalcCellListSmoothInteraction(const double* rad, const dou
 								printf("CellId: %ld \t vertexId: %ld \t otherCellId: %ld \t otherVertexId: %ld interaction %lf \n", cellId, vertexId, otherCellId, otherId, interaction);
 								atomicAdd(&pEnergy[particleId], 0.5 * interaction);
 								atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
-								block.sync();
-							}
-							auto secondPreviousId = getPreviousId(previousId, otherParticleId);
-							getVertexPos(secondPreviousId, pos, secondPreviousPos);
-							getDelta(secondPreviousPos, previousPos, previousSegment);
-							auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, previousSegment);
-							switch (d_simControl.concavityType) {
-								case simControlStruct::concavityEnum::off:
-								if(projection <= 0 && previousProj > 1) {
-									interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-									//printf("CellId: %ld \t vertexId: %ld \t otherCellId: %ld \t otherVertexId: %ld interaction %lf \n", cellId, vertexId, otherCellId, otherId, interaction);
-									atomicAdd(&pEnergy[particleId], 0.5 * interaction);
-									atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
-									block.sync();
-								}
-								break;
-								case simControlStruct::concavityEnum::on:
-								// check if the vertex-vertex interaction is concave or convex
-								getDelta(thisPos, previousPos, interSegment);
-								auto endEndAngle = atan2(interSegment[0]*segment[1] - interSegment[1]*segment[0], interSegment[0]*segment[0] + interSegment[1]*segment[1]);
-								checkAngle(endEndAngle, PI/2);
-								auto endCapAngle = atan2(previousSegment[0]*segment[1] - previousSegment[1]*segment[0], previousSegment[0]*segment[0] + previousSegment[1]*segment[1]);
-								checkAngle(endCapAngle, PI);
-								auto isCapConvexInteraction = (endEndAngle >= 0 && endEndAngle <= endCapAngle);
-								auto isCapConcaveInteraction = (endCapAngle < 0 && endEndAngle > (PI - fabs(endCapAngle)) && endEndAngle < PI);
-								//isConcaveInteraction = false;
-								auto isCapInteraction = (isCapConvexInteraction || isCapConcaveInteraction);
-								// check if the interaction is inverse
-								auto inverseEndEndAngle = (endEndAngle - 2*PI * (endEndAngle > PI));
-								auto isConcaveInteraction = (endCapAngle < 0 && inverseEndEndAngle < 0 && inverseEndEndAngle >= endCapAngle);
-								// endEndAngle for other end of the segment
-								endEndAngle = PI - endEndAngle + fabs(endCapAngle);
-								endEndAngle -= 2*PI * (endEndAngle > 2*PI);
-								endEndAngle += 2*PI * (endEndAngle < 0);
-								auto isInverseInteraction = (isConcaveInteraction || (endCapAngle > 0 && (endEndAngle < endCapAngle)));
-								if((projection <= 0 && isCapInteraction) || (projection > 0 && isInverseInteraction)) {
-									if(isInverseInteraction) {
-										interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-										//printf("CellId: %ld \t vertexId: %ld \t otherCellId: %ld \t otherVertexId: %ld interaction %lf \n", cellId, vertexId, otherCellId, otherId, interaction);
-										atomicAdd(&pEnergy[particleId], 0.5 * interaction);
-										atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
-										block.sync();
-									} else if(previousProj > 1) {
+								//block.sync();
+							} else if(projection <= 0) {
+								auto secondPreviousId = getPreviousId(previousId, otherParticleId);
+								getVertexPos(secondPreviousId, pos, secondPreviousPos);
+								getDelta(secondPreviousPos, previousPos, previousSegment);
+								auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, previousSegment);
+								switch (d_simControl.concavityType) {
+									case simControlStruct::concavityEnum::off:
+									if(previousProj > 1) {
 										interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
 										//printf("CellId: %ld \t vertexId: %ld \t otherCellId: %ld \t otherVertexId: %ld interaction %lf \n", cellId, vertexId, otherCellId, otherId, interaction);
 										atomicAdd(&pEnergy[particleId], 0.5 * interaction);
 										atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
-										block.sync();
 									}
+									break;
+									case simControlStruct::concavityEnum::on:
+									// check if the vertex-vertex interaction is concave or convex
+									getDelta(thisPos, previousPos, interSegment);
+									auto endEndAngle = atan2(interSegment[0]*segment[1] - interSegment[1]*segment[0], interSegment[0]*segment[0] + interSegment[1]*segment[1]);
+									checkAngle(endEndAngle, PI/2);
+									auto endCapAngle = atan2(previousSegment[0]*segment[1] - previousSegment[1]*segment[0], previousSegment[0]*segment[0] + previousSegment[1]*segment[1]);
+									checkAngle(endCapAngle, PI);
+									auto isCapConvexInteraction = (endEndAngle >= 0 && endEndAngle <= endCapAngle);
+									auto isCapConcaveInteraction = (endCapAngle < 0 && endEndAngle > (PI - fabs(endCapAngle)) && endEndAngle < PI);
+									//isConcaveInteraction = false;
+									auto isCapInteraction = (isCapConvexInteraction || isCapConcaveInteraction);
+									// check if the interaction is inverse
+									auto inverseEndEndAngle = (endEndAngle - 2*PI * (endEndAngle > PI));
+									auto isConcaveInteraction = (endCapAngle < 0 && inverseEndEndAngle < 0 && inverseEndEndAngle >= endCapAngle);
+									// endEndAngle for other end of the segment
+									endEndAngle = PI - endEndAngle + fabs(endCapAngle);
+									endEndAngle -= 2*PI * (endEndAngle > 2*PI);
+									endEndAngle += 2*PI * (endEndAngle < 0);
+									auto isInverseInteraction = (isConcaveInteraction || (endCapAngle > 0 && (endEndAngle < endCapAngle)));
+									if((projection <= 0 && isCapInteraction) || (projection > 0 && isInverseInteraction)) {
+										if(isInverseInteraction) {
+											interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+											//printf("CellId: %ld \t vertexId: %ld \t otherCellId: %ld \t otherVertexId: %ld interaction %lf \n", cellId, vertexId, otherCellId, otherId, interaction);
+											atomicAdd(&pEnergy[particleId], 0.5 * interaction);
+											atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
+										} else if(previousProj > 1) {
+											interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+											//printf("CellId: %ld \t vertexId: %ld \t otherCellId: %ld \t otherVertexId: %ld interaction %lf \n", cellId, vertexId, otherCellId, otherId, interaction);
+											atomicAdd(&pEnergy[particleId], 0.5 * interaction);
+											atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
+										}
+									}
+									break;
 								}
-								break;
 							}
 						}
 					}
 				}
 			}
 		}
+	__syncthreads();
   	}
 }
 
@@ -1341,7 +1335,7 @@ __global__ void kernelCalcVertexForceTorque(const double* rad, const double* pos
 __global__ void kernelCalcVertexSmoothForceTorque(const double* rad, const double* pos, const double* pPos, double* force, double* torque, double* pEnergy) {
   	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
-		thread_block block = this_thread_block();
+		//thread_block block = this_thread_block();
 		auto particleId = d_particleIdListPtr[vertexId];
     	auto otherRad = 0.0;
 		auto interaction = 0.0;
@@ -1372,19 +1366,22 @@ __global__ void kernelCalcVertexSmoothForceTorque(const double* rad, const doubl
 				if(projection > 0 && projection <= 1) {
 					getProjectionPos(previousPos, segment, projPos, projection);
 					interaction = calcVertexSegmentInteraction(thisPos, projPos, otherPos, previousPos, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim], &force[previousId*d_nDim]);
-					atomicAdd(&pEnergy[particleId], 0.5 * interaction);
-					atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
-					block.sync();
-				}
-				auto secondPreviousId = getPreviousId(previousId, otherParticleId);
-				getVertexPos(secondPreviousId, pos, secondPreviousPos);
-				getDelta(secondPreviousPos, previousPos, previousSegment);
-				auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, previousSegment);
-				if(projection <= 0 && previousProj > 1) {
-					interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-					atomicAdd(&pEnergy[particleId], 0.5 * interaction);
-					atomicAdd(&pEnergy[otherParticleId], 0.5 * interaction);
-					block.sync();
+					atomicAdd(&pEnergy[particleId], interaction);
+					atomicAdd(&pEnergy[otherParticleId], interaction);
+					//if(interaction!=0) printf("particleId: %ld \t vertexId: %ld \t otherId: %ld \t previousId: %ld \t interaction %lf \n", particleId, vertexId, otherId, previousId, pEnergy[particleId]);
+					//block.sync();
+				} else if(projection <= 0) {
+					auto secondPreviousId = getPreviousId(previousId, otherParticleId);
+					getVertexPos(secondPreviousId, pos, secondPreviousPos);
+					getDelta(secondPreviousPos, previousPos, previousSegment);
+					auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, previousSegment);
+					if(previousProj > 1) {
+						interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+						atomicAdd(&pEnergy[particleId], interaction);
+						atomicAdd(&pEnergy[otherParticleId], interaction);
+						//if(interaction != 0) printf("particleId: %ld \t vertexId: %ld \t otherId: %ld \t interaction %lf \n", particleId, vertexId, otherId, pEnergy[particleId]);
+						//block.sync();
+					}
 				}
 			}
 		}
@@ -1392,6 +1389,7 @@ __global__ void kernelCalcVertexSmoothForceTorque(const double* rad, const doubl
 		getRelativeVertexPos(vertexId, pos, thisPos, partPos);
 		torque[vertexId] = (thisPos[0] * force[vertexId * d_nDim + 1] - thisPos[1] * force[vertexId * d_nDim]);
   	}
+	__syncthreads();
 }
 
 __global__ void kernelCalcParticleRigidForceEnergy(const double* force, const double* torque, const double* energy, double* pForce, double* pTorque, double* pEnergy) {
@@ -1655,56 +1653,6 @@ __global__ void kernelCalcNeighborList(const double* pos, const double* rad, con
 		d_maxNeighborListPtr[vertexId] = addedNeighbor;
 	}
 }
-
-//__global__ void kernelFillLinkedList(const double* pos) {
-//	long cellIdx = blockIdx.x * blockDim.x + threadIdx.x;
-//	long cellIdy = blockIdx.y * blockDim.y + threadIdx.y;
-//	if (cellIdx < d_numCells && cellIdy < d_numCells) {
-//		long cellId = cellIdx * d_numCells + cellIdy;
-//		double thisPos[MAXDIM];
-//		printf("cellId: %ld %ld %ld \n", cellId, cellIdx, cellIdy);
-//		for (long vertexId = 0; vertexId < d_numVertices; vertexId++) {
-//			getVertexPBCPos(vertexId, pos, thisPos);
-//			if(isVertexInCell(thisPos, vertexId, cellId)) {
-//				printf("vertexId: %ld cellId %ld \n", vertexId, cellId);
-//				// link to the previous occupant of the list or -1 if it is the first in the cell
-//				d_linkedListPtr[vertexId] = d_headerPtr[cellId];
-				// the last vertex (at the end of the loop) is the header 
-//				d_headerPtr[cellId] = vertexId;
-//			} else {
-//				printf("vertexId %ld doesn't belong to a cell \n", vertexId);
-//			}
-//		}
-//	}
-//}
-
-//__global__ void kernelFillCellNeighborList(const double* pos) {
-//	long cellIdx = blockIdx.x * blockDim.x + threadIdx.x;
-//	long cellIdy = blockIdx.y * blockDim.y + threadIdx.y;
-//	if (cellIdx < d_numCells && cellIdy < d_numCells) {
-//		long cellId = cellIdx * d_numCells + cellIdy;
-//		long vertexId, otherId, addedNeighbor = 0;
-//		double thisPos[MAXDIM];
-//		for (vertexId = 0; vertexId < d_numVertices; vertexId++) {
-//			getVertexPBCPos(vertexId, pos, thisPos);
-//			if(isVertexInCell(thisPos, vertexId, cellId)) {
-				// loop over neighboring cells 
-//				for (long dx = -1; dx <= 1; dx++) {
-//					for (long dy = -1; dy <= 1; dy++) {
-//						long neighborCellId = getNeighborCellId(cellIdx, cellIdy, dx, dy);
-//						for (otherId = d_headerPtr[neighborCellId]; otherId != -1L; otherId = d_linkedListPtr[otherId]) {
-//							if(addedNeighbor < d_cellNeighborListSize) {
-//								d_cellNeighborListPtr[cellId * d_cellNeighborListSize + addedNeighbor] = vertexId;
-//							}
-//							addedNeighbor++;
-//						}
-//					}
-//				}
-//			}
-//		}
-//		d_maxCellNeighborListPtr[cellId] = addedNeighbor;
-//	}
-//}
 
 __global__ void kernelCalcParticleNeighbors(const double* pos, const double* rad, const long neighborLimit, long* neighborList, long* numNeighbors) {
 	long particleId = blockIdx.x * blockDim.x + threadIdx.x;

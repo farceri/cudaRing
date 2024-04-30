@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
       if(iteration % printFreq == 0 && iteration != 0) {
       cout << "FIRE: iteration: " << iteration;
       cout << " maxUnbalancedForce: " << setprecision(precision) << dpm.getParticleMaxUnbalancedForce();
-      cout << " energy: " << dpm.getParticleEnergy() << endl;
+      cout << " energy: " << dpm.getParticlePotentialEnergy() << endl;
       }
       maxDelta = dpm.getParticleMaxDisplacement();
       if(3*maxDelta > cutoff) {
@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     }
     cout << "\nFIRE: iteration: " << iteration;
     cout << " maxUnbalancedForce: " << setprecision(precision) << dpm.getParticleMaxUnbalancedForce();
-    cout << " energy: " << setprecision(precision) << dpm.getParticleEnergy() << endl;
+    cout << " energy: " << setprecision(precision) << dpm.getParticlePotentialEnergy() << endl;
     currentDir = outDir + "sp/";
     std::experimental::filesystem::create_directory(currentDir);
     ioDPM.saveParticlePacking(currentDir);

@@ -22,20 +22,24 @@ using std::cout;
 
 int main(int argc, char **argv) {
   bool read = true, readState = true, saveFinal = false, linSave = true;
-  bool lj = false, wca = false, alltoall = false, cell = false;
+  bool lj = false, wca = false, alltoall = false, cell = false, rigid = false;
   long step = 0, numParticles = 2, nDim = 2, numVertexPerParticle = 20, maxStep = atof(argv[3]), updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double LJcutoff = 4, cutoff = 0.5, cutDistance, timeStep = atof(argv[2]), sigma, timeUnit, size;
   double sigma0 = 1, sigma1 = 3, lx = 10, ly = 10, vel1 = -0.1, y0 = 0.5, y1 = 0.7, epot, ekin;
-  double ea = 100, el = 1, eb = 0, ec = 10;
+  double ea = 100, el = 1, eb = 1, ec = 1;
   std::string outDir, energyFile, inDir = argv[1], currentDir, dirSample;
   // initialize sp object
 	DPM2D dp(numParticles, nDim, numVertexPerParticle);
   dp.printDeviceProperties();
   long numVertices = dp.getNumVertices();
   dp.setSimulationType(simControlStruct::simulationEnum::gpu);
+  if(rigid == true) {
+    dp.setParticleType(simControlStruct::particleEnum::rigid);
+  }
   dp.setPotentialType(simControlStruct::potentialEnum::harmonic);
   dp.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
+  dp.setConcavityType(simControlStruct::concavityEnum::off);
   dp.setEnergyCosts(ea, el, eb, ec);
   if(lj == true) {
     dp.setPotentialType(simControlStruct::potentialEnum::lennardJones);
@@ -48,7 +52,7 @@ int main(int argc, char **argv) {
     cout << "Setting WCA potential" << endl;
   } else {
     cout << "Setting Harmonic potential" << endl;
-    dirSample = "harmonic-smooth-gpu/";
+    dirSample = "harmonic-smooth-gpu-bend/";
   }
   if(alltoall == true) {
     dp.setNeighborType(simControlStruct::neighborEnum::allToAll);
@@ -105,14 +109,19 @@ int main(int argc, char **argv) {
   while(step != maxStep) {
     dp.testInteraction(timeStep);
     if(step % saveEnergyFreq == 0) {
-      ioDPM.saveEnergy(step, timeStep, numVertices);
+      ioDPM.saveEnergy(step, timeStep, numParticles, numVertices);
       if(step % checkPointFreq == 0) {
         cout << "NVE: current step: " << step;
-        epot = dp.getPotentialEnergy();
-        ekin = dp.getKineticEnergy();
-        cout << " U: " << epot / numVertices;
-        cout << " K: " << ekin / numVertices;
-        cout << " Energy: " << (epot + ekin) / numVertices;
+        if(rigid == true) {
+          epot = dp.getParticlePotentialEnergy();
+          ekin = dp.getRigidKineticEnergy();
+        } else {
+          epot = dp.getPotentialEnergy() / numVertices;
+          ekin = dp.getKineticEnergy() / numVertices;
+        }
+        cout << " U: " << epot;
+        cout << " K: " << ekin;
+        cout << " Energy: " << epot + ekin;
         if(dp.simControl.neighborType == simControlStruct::neighborEnum::neighbor) {
           updateCount = dp.getUpdateCount();
           if(step != 0 && updateCount > 0) {

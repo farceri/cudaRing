@@ -137,7 +137,7 @@ int main(int argc, char **argv) {
         dpm.activeLangevinLoop();
       }
       if(step % saveEnergyFreq == 0) {
-        ioDPM.saveEnergy(step, timeStep);
+        ioDPM.saveEnergy(step, timeStep, numParticles, numVertices);
         if(step % checkPointFreq == 0) {
           cout << "Test: current step: " << step;
           cout << " E: " << (dpm.getPotentialEnergy() + dpm.getKineticEnergy()) / numParticles;

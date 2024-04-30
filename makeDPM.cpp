@@ -58,7 +58,7 @@ int main(int argc, char **argv) {
   }
   cout << "\nFIRE: iteration: " << iteration;
   cout << " maxUnbalancedForce: " << setprecision(precision) << dpm.getParticleMaxUnbalancedForce();
-  cout << " energy: " << setprecision(precision) << dpm.getParticleEnergy() << endl;
+  cout << " energy: " << setprecision(precision) << dpm.getParticlePotentialEnergy() << endl;
   // put vertices on particle perimeters
   dpm.initVerticesOnParticles();
   cout << "current packing fraction: " << setprecision(precision) << dpm.getPhi() << endl;

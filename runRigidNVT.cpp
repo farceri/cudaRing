@@ -98,7 +98,7 @@ int main(int argc, char **argv) {
       ioDPM.saveRigidEnergy(step, timeStep, numParticles);
       if(step % checkPointFreq == 0) {
         cout << "Rigid Langevin: current step: " << step;
-        cout << " E/N: " << dpm.getParticleEnergy() / numParticles;
+        cout << " E/N: " << dpm.getParticlePotentialEnergy() / numParticles;
         cout << " T: " << dpm.getParticleTemperature();
         cout << " ISF: " << dpm.getParticleISF(waveQ) << endl;
         if(saveFinal == true) {

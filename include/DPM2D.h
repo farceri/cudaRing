@@ -149,13 +149,9 @@ public:
   thrust::host_vector<long> h_header;
   thrust::host_vector<long> h_linkedList;
   thrust::host_vector<long> h_cellIndexList;
-  //thrust::host_vector<long> h_cellNeighborList;
-  //thrust::host_vector<long> h_maxCellNeighborList;
   thrust::device_vector<long> d_header;
   thrust::device_vector<long> d_linkedList;
   thrust::device_vector<long> d_cellIndexList;
-  //thrust::device_vector<long> d_cellNeighborList;
-  //thrust::device_vector<long> d_maxCellNeighborList;
   double cellSize;
   long numCells;
   long maxCellNeighbors;
@@ -348,8 +344,6 @@ public:
 
   thrust::host_vector<long> getCellIndexList();
 
-  //thrust::host_vector<long> getCellNeighborList();
-
   thrust::host_vector<long> getContacts();
 
   void printNeighbors();
@@ -484,13 +478,15 @@ public:
 
   void secondUpdate(double timeStep);
 
-  void testInteraction(double timeStep);
+  void testDeformableInteraction(double timeStep);
 
   void firstRigidUpdate(double timeStep);
 
   void secondRigidUpdate(double timeStep);
 
   void testRigidInteraction(double timeStep);
+
+  void testInteraction(double timeStep);
 
   void printTwoParticles();
 
@@ -545,12 +541,6 @@ public:
 
   void syncLinkedListToDevice();
 
-  //void calcCellNeighborList();
-
-  //void fillCellNeighborList();
-
-  //void syncCellNeighborsToDevice();
-
   void calcParticleNeighborList(double cutDistance);
 
   void syncParticleNeighborsToDevice();
@@ -563,9 +553,11 @@ public:
 
   double getRigidMaxUnbalancedForce();
 
-  double getParticleEnergy();
+  double getParticlePotentialEnergy();
 
   double getParticleKineticEnergy();
+
+  double getRigidKineticEnergy();
 
   double getParticleTemperature();
 

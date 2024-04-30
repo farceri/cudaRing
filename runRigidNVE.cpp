@@ -90,10 +90,10 @@ int main(int argc, char **argv) {
   while(step != maxStep) {
     dpm.rigidNVELoop();
     if(step % linFreq == 0) {
-      ioDPM.saveEnergy(step, timeStep);
+      ioDPM.saveRigidEnergy(step, timeStep, numParticles);
       if(step % checkPointFreq == 0) {
         cout << "Rigid NVE: current step: " << step;
-        cout << " E/N: " << dpm.getParticleEnergy() / numParticles;
+        cout << " E/N: " << dpm.getParticlePotentialEnergy() / numParticles;
         cout << " T: " << dpm.getParticleTemperature();
         cout << " ISF: " << dpm.getParticleISF(waveQ) << endl;
         if(saveFinal == true) {

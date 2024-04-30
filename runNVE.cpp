@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
   while(step != maxStep) {
     dpm.NVELoop();
     if(step % linFreq == 0) {
-      ioDPM.saveEnergy(step, timeStep, numVertices);
+      ioDPM.saveDeformableEnergy(step, timeStep, numVertices);
       if(step % checkPointFreq == 0) {
         cout << "NVE: current step: " << step;
         cout << " E/N: " << dpm.getEnergy() / numVertices;

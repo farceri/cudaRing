@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
   long step, maxStep = atof(argv[6]), printFreq = int(maxStep / 10), minStep = 20, numStep = 0;
   double sigma, cutDistance = 1, polydispersity = 0.16, previousPhi, currentPhi = 0.1, deltaPhi = 5e-03;
   double forceTollerance = 1e-12, waveQ, FIREStep = 1e-03, timeStep, timeUnit, dt = atof(argv[2]);
-  double Tinject = atof(argv[3]), phiTh = 0.84, cutoff, scaleFactor;
+  double Tinject = atof(argv[3]), phiTh = 0.84, cutoff, scaleFactor, maxDelta;
   double ec = 1, calA0 = atof(argv[5]), damping, inertiaOverDamping = 100;
   thrust::host_vector<double> boxSize(nDim);
   std::string outDir = argv[1], currentDir, inDir, energyFile;
@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
       if(iteration % printFreq == 0 && iteration != 0) {
       cout << "FIRE: iteration: " << iteration;
       cout << " maxUnbalancedForce: " << setprecision(precision) << dpm.getParticleMaxUnbalancedForce();
-      cout << " energy: " << dpm.getParticleEnergy() << endl;
+      cout << " energy: " << dpm.getParticlePotentialEnergy() << endl;
       }
       maxDelta = dpm.getParticleMaxDisplacement();
       if(3*maxDelta > cutoff) {
@@ -75,7 +75,7 @@ int main(int argc, char **argv) {
     }
     cout << "\nFIRE: iteration: " << iteration;
     cout << " maxUnbalancedForce: " << setprecision(precision) << dpm.getParticleMaxUnbalancedForce();
-    cout << " energy: " << setprecision(precision) << dpm.getParticleEnergy() << endl;
+    cout << " energy: " << setprecision(precision) << dpm.getParticlePotentialEnergy() << endl;
     currentDir = outDir + "sp/";
     std::experimental::filesystem::create_directory(currentDir);
     ioDPM.saveParticlePacking(currentDir);
@@ -112,7 +112,7 @@ int main(int argc, char **argv) {
       dpm.rigidLangevinLoop();
       if(step % printFreq == 0) {
         cout << "Rigid Langevin: current step: " << step;
-        cout << " E/N: " << dpm.getParticleEnergy() / numParticles;
+        cout << " E/N: " << dpm.getParticlePotentialEnergy() / numParticles;
         cout << " T: " << dpm.getParticleTemperature();
         cout << " ISF: " << dpm.getParticleISF(waveQ) << endl;
       }
