@@ -3,7 +3,7 @@
 ## USER SPECIFIC DIRECTORIES ##
 
 # CUDA directory:
-CUDA_ROOT_DIR=/usr/local/cuda
+CUDA_ROOT_DIR=/usr/local/cuda-12.2
 #CUDA_ROOT_DIR=/gpfs/loomis/apps/avx/software/CUDAcore/11.2.2
 
 ##########################################################
@@ -25,7 +25,7 @@ NVCC=nvcc
 NVCC_FLAGS= -O3 -Wno-deprecated-gpu-targets --expt-extended-lambda --expt-relaxed-constexpr -diag-suppress 550 #-g -G
 NVCC_LIBS=
 
-LFLAGS= -lm -Wno-deprecated-gpu-targets -fstack-protector 
+LFLAGS= -lm -Wno-deprecated-gpu-targets -fstack-protector
 
 # CUDA library directory:
 CUDA_LIB_DIR= -L$(CUDA_ROOT_DIR)/lib64
@@ -54,12 +54,12 @@ INC_DIR = include
 # Target executable name:
 
 #EXE = testDPM
-EXE = testInteraction
+#EXE = testInteraction
 
 # make packings
 #EXE = makeDPM
 #EXE = compressFIRE
-#EXE = compressNVE
+EXE = compressNVE
 #EXE = compressNVT
 #EXE = compressRigidFIRE
 #EXE = compressRigidNVT

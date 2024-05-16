@@ -23,14 +23,14 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool read = false, readState = false, cpu = false, wca = true, smooth = false, concavity = false;
+  bool read = false, readState = false, cpu = false, wca = false, smooth = true, concavity = true;
   long numParticles = atol(argv[4]), nDim = 2, numVertexPerParticle = 32, numVertices;
   long step, iteration = 0, maxIterations = 5e06, maxSearchStep = 1500, searchStep = 0, updateCount;
   long maxStep = atof(argv[6]), printFreq = int(maxStep / 10), saveFreq = int(printFreq / 10), minStep = 20, numStep = 0;
   double sigma, polydispersity = 0.2, previousPhi, currentPhi = 0.2, deltaPhi = 5e-03, phiTh = 0.9;
-  double cutDistance, cutoff = 2, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
+  double cutDistance, cutoff = 0.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
   double Tinject = atof(argv[3]), maxDelta, scaleFactor, timeStep = atof(argv[2]), size;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
+  double ea = 1e05, el = 20, eb = 0, ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
   thrust::host_vector<double> boxSize(nDim);
   std::string outDir = argv[1], currentDir, inDir, energyFile;
   // fire paramaters: a_start, f_dec, f_inc, f_a, dt, dt_max, a
@@ -110,10 +110,10 @@ int main(int argc, char **argv) {
   if(searchStep != 0) {
       dpm.calcNeighbors(cutDistance);
       dpm.calcForceEnergy();
-      cout << "Energy after compression - E/N: " << sp.getEnergy() / numVertices << endl;
+      cout << "Energy after compression - E/N: " << dpm.getEnergy() / numVertices << endl;
       dpm.adjustKineticEnergy(prevEnergy);
       dpm.calcForceEnergy();
-      cout << "Energy after adjustment - E/N: " << sp.getEnergy() / numVertices << endl;
+      cout << "Energy after adjustment - E/N: " << dpm.getEnergy() / numVertices << endl;
     }
   while (searchStep < maxSearchStep) {
     currentDir = outDir + std::to_string(dpm.getPhi()).substr(0,6) + "/";
@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
     while(step != maxStep) {
       dpm.NVELoop();
       if(step % saveFreq == 0) {
-        ioDPM.saveEnergy(step, timeStep, numParticles);
+        ioDPM.saveEnergy(step, timeStep, numParticles, numVertices);
       }
       if(step % printFreq == 0) {
         cout << "NVE: current step: " << step;
@@ -147,7 +147,7 @@ int main(int argc, char **argv) {
       }
       step += 1;
     }
-    prevEnergy = sp.getEnergy();
+    prevEnergy = dpm.getEnergy();
     cout << "Energy before compression - E/N: " << prevEnergy / numVertices << endl;
     // save minimized configuration
     ioDPM.savePacking(currentDir);

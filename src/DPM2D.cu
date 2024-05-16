@@ -1512,7 +1512,7 @@ void DPM2D::setTwoParticleTest(double lx, double ly, double y0, double y1, doubl
     d_particleVel[1 * nDim + 1] = vel1;
     break;
   }
-  
+
   setLengthScaleToOne();
   if(cudaGetLastError()) cout << "DPM2D():: cudaGetLastError(): " << cudaGetLastError() << endl;
 }
@@ -1659,22 +1659,30 @@ void DPM2D::calcForceEnergy() {
   }
 }
 
-void DPM2D::calcForceEnergyGPU() {
+void DPM2D::calcShapeForceEnergy() {
   calcParticlesShape();
   calcParticlesPositions();
   // shape variables
-  const double *a0 = thrust::raw_pointer_cast(&d_a0[0]);
-  const double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
+	const double *a0 = thrust::raw_pointer_cast(&d_a0[0]);
+	const double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
   const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-  const double *theta0 = thrust::raw_pointer_cast(&d_theta0[0]);
+	const double *theta0 = thrust::raw_pointer_cast(&d_theta0[0]);
   // dynamical variables
   const double *area = thrust::raw_pointer_cast(&d_area[0]);
   const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-  double *force = thrust::raw_pointer_cast(&d_force[0]);
-  double *energy = thrust::raw_pointer_cast(&d_energy[0]);
+	double *force = thrust::raw_pointer_cast(&d_force[0]);
+	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
   // compute shape force
   kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, pos, force, energy);
+}
+
+void DPM2D::calcForceEnergyGPU() {
+  calcShapeForceEnergy();
+  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
+  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+  double *force = thrust::raw_pointer_cast(&d_force[0]);
+  double *energy = thrust::raw_pointer_cast(&d_energy[0]);
   double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
   thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
   switch (simControl.interactionType) {
@@ -1717,24 +1725,6 @@ void DPM2D::calcInteraction() {
     calcCellListSmoothInteraction();
     break;
   }
-}
-
-void DPM2D::calcShapeForceEnergy() {
-  calcParticlesShape();
-  calcParticlesPositions();
-  // shape variables
-	const double *a0 = thrust::raw_pointer_cast(&d_a0[0]);
-	const double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
-  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-	const double *theta0 = thrust::raw_pointer_cast(&d_theta0[0]);
-  // dynamical variables
-  const double *area = thrust::raw_pointer_cast(&d_area[0]);
-  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
-  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-	double *force = thrust::raw_pointer_cast(&d_force[0]);
-	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
-  // compute shape force
-  kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, pos, force, energy);
 }
 
 double DPM2D::pbcDistance(double x1, double x2, double size) {
@@ -2037,7 +2027,7 @@ void DPM2D::calcCellListSmoothInteraction() {
       //cellIdy = h_cellIndexList[vertexId * nDim + 1];
       cellIdx = static_cast<long>(thisPos[0] / cellSize);
       cellIdy = static_cast<long>(thisPos[1] / cellSize);
-      // loop over neighboring cells 
+      // loop over neighboring cells
       for (dx = -1; dx <= 1; dx++) {
         for (dy = -1; dy <= 1; dy++) {
           otherCellId = getNeighborCellId(cellIdx, cellIdy, dx, dy);
@@ -2407,7 +2397,7 @@ void DPM2D::fillLinkedList() {
     //printf("vertexId: %ld cellId %ld \n", vertexId, cId);
     // link to the previous occupant of the list or -1 if it is the first in the cell
     h_linkedList[vertexId] = h_header[cId];
-    // the last vertex (at the end of the loop) is the header 
+    // the last vertex (at the end of the loop) is the header
     h_header[cId] = vertexId;
     h_cellIndexList[vertexId * nDim] = cIdx;
     h_cellIndexList[vertexId * nDim + 1] = cIdy;
