@@ -20,7 +20,7 @@ using std::vector;
 using std::string;
 
 struct simControlStruct {
-  enum class simulationEnum {gpu, cpu} simulationType;
+  enum class simulationEnum {gpu, cpu, omp} simulationType;
   enum class particleEnum {deformable, rigid} particleType;
   enum class potentialEnum {harmonic, lennardJones, adhesive, wca} potentialType;
   enum class interactionEnum {vertexVertex, cellSmooth, vertexSmooth, all} interactionType;
@@ -462,16 +462,6 @@ public:
 
   double setTimeStep(double dt_);
 
-  void calcForceEnergy();
-
-  void calcForceEnergyGPU();
-
-  void calcForceEnergyCPU();
-
-  void calcShapeForceEnergy();
-
-  void calcInteraction();
-
   void setTwoParticleTest(double lx, double ly, double y0, double y1, double vel1);
 
   void firstUpdate(double timeStep);
@@ -490,9 +480,21 @@ public:
 
   void printTwoParticles();
 
+  void calcForceEnergy();
+
+  void calcForceEnergyGPU();
+
+  void calcForceEnergyCPU();
+
+  void calcForceEnergyOMP();
+
+  void calcShapeForceEnergy();
+
   double pbcDistance(double x1, double x2, double size);
 
   void calcVertexVertexInteraction();
+
+  void calcVertexVertexInteractionOMP();
 
   long getPreviousId(long vertexId, long particleId);
 
@@ -503,6 +505,8 @@ public:
   double calcCross(double* thisPos, double* otherPos, double* previousPos);
 
   void calcSmoothInteraction();
+
+  void calcSmoothInteractionOMP();
 
   long getNeighborCellId(long cellIdx, long cellIdy, long dx, long dy);
 

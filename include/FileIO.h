@@ -370,6 +370,7 @@ public:
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
     save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
     save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
+    save1DFile(dirName + "particleRad.dat", dpm_->getParticleRadii());
   }
 
   void saveRigidPacking(string dirName) {

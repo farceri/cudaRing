@@ -30,52 +30,53 @@ struct square {
 struct randNum
 {
     double a, b;
+    mutable thrust::default_random_engine rng;
 
     __host__ __device__
     randNum(double _a=0.f, double _b=1.f) : a(_a), b(_b) {};
 
     __host__ __device__
-        double operator()(const unsigned int n) const
-        {
-            thrust::default_random_engine rng;
-            thrust::uniform_real_distribution<double> dist(a, b);
-            rng.discard(n);
-            return dist(rng);
-        }
+    double operator()(const unsigned int n) const
+    {
+        thrust::uniform_real_distribution<double> dist(a, b);
+        rng.discard(n);
+        return dist(rng);
+    }
 };
 
 struct randInt
 {
     int a, b;
+    mutable thrust::default_random_engine rng;
 
     __host__ __device__
     randInt(int _a=0, int _b=1) : a(_a), b(_b) {};
 
     __host__ __device__
-        int operator()(const unsigned int n) const
-        {
-            thrust::default_random_engine rng;
-            thrust::uniform_int_distribution<double> dist(a, b);
-            rng.discard(n);
-            return dist(rng);
-        }
+    int operator()(const unsigned int n) const
+    {
+        thrust::uniform_int_distribution<double> dist(a, b);
+        rng.discard(n);
+        return dist(rng);
+    }
 };
 
 struct gaussNum
 {
     double a, b;
+    mutable thrust::default_random_engine rng;
 
     __host__ __device__
     gaussNum(double _a=0.f, double _b=1.f) : a(_a), b(_b) {};
 
     __host__ __device__
-        double operator()(const unsigned int n) const
-        {
-            thrust::default_random_engine rng;
-            thrust::normal_distribution<double> dist(a, b);
-            rng.discard(n);
-            return dist(rng);
-        }
+    double operator()(const unsigned int n) const
+    {
+        thrust::normal_distribution<double> dist(a, b);
+        rng.discard(n);
+        return dist(rng);
+    }
 };
+
 
 #endif /* DEFS_H_ */

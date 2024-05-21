@@ -23,7 +23,7 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool read = false, readState = true;
+  bool read = false, readState = false;
   long numParticles = atol(argv[4]), nDim = 2, numVertexPerParticle = 32, numVertices;
   long iteration = 0, maxIterations = 5e06, maxSearchStep = 1500, searchStep = 0, updateCount;
   long step, maxStep = atof(argv[7]), printFreq = int(maxStep / 10), minStep = 20, numStep = 0;
@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
   double cutDistance = 1, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02;
   double Tinject = atof(argv[3]), phiTh = 0.92, cutoff, maxDelta, scaleFactor;
   double damping, inertiaOverDamping = 100, timeStep, timeUnit, dt = atof(argv[2]);
-  double ea = 1e04, el = 10, eb = atof(argv[6]), ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
+  double ea = 1e05, el = 20, eb = atof(argv[6]), ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
   thrust::host_vector<double> boxSize(nDim);
   std::string outDir = argv[1], currentDir, inDir, energyFile;
   // fire paramaters: a_start, f_dec, f_inc, f_a, dt, dt_max, a
@@ -94,7 +94,6 @@ int main(int argc, char **argv) {
     ioDPM.savePacking(currentDir);
   }
   dpm.setPotentialType(simControlStruct::potentialEnum::wca);
-  dpm.setInteractionType(simControlStruct::interactionEnum::smooth);
   dpm.setEnergyCosts(ea, el, eb, ec);
   cout << "Energy scales: area " << ea << " segment " << el << " bending " << eb << " interaction " << ec << endl;
   numVertices = dpm.getNumVertices();
@@ -150,7 +149,7 @@ int main(int argc, char **argv) {
       cout << "New boxSize: Lx: " << boxSize[0] << " Ly: " << boxSize[1] << " scale: " << scaleFactor << endl;
       searchStep += 1;
     }
-    ioDPM.saveEnergy(step, timeStep);
+    ioDPM.saveEnergy(step, timeStep, numParticles, numVertices);
   }
   ioDPM.closeEnergyFile();
 

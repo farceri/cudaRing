@@ -290,7 +290,7 @@ void FIRE::minimizerRigidLoop() {
 	// Update vertex positions
 	dpm_->translateVertices();
 	dpm_->rotateVertices();
-	dpm_->calcNeighborList(cutDistance);
+	dpm_->checkNeighbors();
 	// Calculate the new set of forces at the new step
 	dpm_->calcRigidForceEnergy();
 	// Update the velocity
@@ -404,6 +404,7 @@ void FIRE::minimizerVertexLoop() {
 	// Move the system forward, based on the previous velocities and forces
 	updateVertexPosition(fire_dt);
 	// Calculate the new set of forces at the new step
+	dpm_->checkNeighbors();
 	dpm_->calcForceEnergy();
 	// Update the velocity
 	updateVertexVelocity(0.5 * fire_dt);

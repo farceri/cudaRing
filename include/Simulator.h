@@ -106,7 +106,6 @@ public:
   NVE() = default;
   NVE(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
   
-  virtual void injectKineticEnergy();
   virtual void integrate();
 };
 
@@ -161,11 +160,11 @@ public:
 
 //****************** integrators for deformable particles ********************//
 // Langevin integrator child of SimulatorInterface
-class RigidNVE: public Langevin
+class RigidNVE: public RigidLangevin
 {
 public:
   RigidNVE() = default;
-  RigidNVE(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
+  RigidNVE(DPM2D * dpmPtr, SimConfig config) : RigidLangevin:: RigidLangevin(dpmPtr, config){;}
 
   virtual void updatePosition(double timeStep);
   virtual void updateVelocity(double timeStep);

@@ -54,12 +54,12 @@ INC_DIR = include
 # Target executable name:
 
 #EXE = testDPM
-EXE = testInteraction
+#EXE = testInteraction
 
 # make packings
 #EXE = makeDPM
 #EXE = compressFIRE
-#EXE = compressNVE
+EXE = compressNVE
 #EXE = compressNVT
 #EXE = compressRigidFIRE
 #EXE = compressRigidNVT

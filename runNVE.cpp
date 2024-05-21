@@ -23,18 +23,18 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool readAndMakeNewDir = false, readAndSaveSameDir = false, runDynamics = false;
+  bool readAndMakeNewDir = false, readAndSaveSameDir = true, runDynamics = true;
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = true, logSave = false, linSave = false, saveFinal = true;
+  bool readState = false, logSave = false, linSave = true, saveFinal = false;
   long numParticles = atof(argv[6]), nDim = 2, numVertexPerParticle = 32, numVertices;
-  long step = 0, maxStep = atof(argv[4]), initialStep = 0, multiple = 1, saveFreq = 1;
+  long step = 0, maxStep = atof(argv[4]), initialStep = atof(argv[5]), multiple = 1, saveFreq = 1;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), updateCount = 0;
-  double cutDistance, cutoff = 2, timeStep = atof(argv[2]), timeUnit = 0, sigma, waveQ, stiff = 2, ext = 1.5;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, maxDelta, Tinject = atof(argv[3]), size;
-  std::string outDir, energyFile, currentDir, inDir = argv[1], dirSample, dirDynamics, whichDynamics = "nve/";
-  dirSample = whichDynamics + "gpu-smooth/";
+  double cutDistance, cutoff = 0.5, timeStep = atof(argv[2]), timeUnit = 0, sigma, waveQ;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, Tinject = atof(argv[3]), size;
+  std::string outDir, energyFile, currentDir, inDir = argv[1], dirSample, whichDynamics = "nve/";
+  dirSample = whichDynamics + "T" + argv[3] + "/";
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
   dpm.setSimulationType(simControlStruct::simulationEnum::gpu);
@@ -42,7 +42,6 @@ int main(int argc, char **argv) {
   dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
   dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
   dpm.setConcavityType(simControlStruct::concavityEnum::off);
-  dpm.setMonomerType(simControlStruct::monomerEnum::harmonic);
   ioDPMFile ioDPM(&dpm);
   // set input and output
   if (readAndSaveSameDir == true) {//keep running the same dynamics
@@ -50,10 +49,9 @@ int main(int argc, char **argv) {
     inDir = inDir + dirSample;
     outDir = inDir;
     if(runDynamics == true) {
-      outDir = outDir + dirDynamics;
+      outDir = outDir + "dynamics-smooth/";
       if(std::experimental::filesystem::exists(outDir) == true) {
         inDir = outDir;
-        initialStep = atof(argv[5]);
       } else {
         std::experimental::filesystem::create_directory(outDir);
       }
@@ -79,11 +77,10 @@ int main(int argc, char **argv) {
   // output file
   energyFile = outDir + "energy.dat";
   ioDPM.openEnergyFile(energyFile);
-  sigma = dpm.getMeanParticleSize();
+  sigma = 2 * dpm.getMeanParticleSize();
   timeUnit = sigma / sqrt(ec);//epsilon and mass are 1 sqrt(m sigma^2 / epsilon)
   timeStep = dpm.setTimeStep(timeStep * timeUnit);
   cout << "Time step: " << timeStep << " sigma: " << sigma << " Tinject: " << Tinject << endl;
-  //dpm.setFENEconstants(stiff, ext);
   numVertices = dpm.getNumVertices();
   // initialize simulation
   dpm.initNVE(Tinject, readState);
@@ -96,7 +93,6 @@ int main(int argc, char **argv) {
   }
   dpm.calcForceEnergy();
   dpm.resetUpdateCount();
-  dpm.setParticleInitialPositions();
   waveQ = dpm.getDeformableWaveNumber();
   // record simulation time
   float elapsed_time_ms = 0;
@@ -116,14 +112,14 @@ int main(int argc, char **argv) {
         cout << " E/N: " << dpm.getEnergy() / numVertices;
         cout << " T: " << dpm.getTemperature();
         cout << " ISF: " << dpm.getParticleISF(waveQ);
-        cout << " phi: " << dpm.getPhi() << endl;
-        //updateCount = dpm.getUpdateCount();
-        //if(step != 0 && updateCount > 0) {
-        //  cout << " number of updates: " << updateCount << " frequency " << checkPointFreq / updateCount << endl;
-        //} else {
-        //  cout << " no updates" << endl;
-        //}
-        //dpm.resetUpdateCount();
+        cout << " phi: " << dpm.getPhi();
+        updateCount = dpm.getUpdateCount();
+        if(step != 0 && updateCount > 0) {
+          cout << " number of updates: " << updateCount << " frequency " << checkPointFreq / updateCount << endl;
+        } else {
+          cout << " no updates" << endl;
+        }
+        dpm.resetUpdateCount();
         if(saveFinal == true) {
       	  ioDPM.savePacking(outDir);
           ioDPM.saveNeighbors(outDir);
