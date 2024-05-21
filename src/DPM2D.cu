@@ -1515,7 +1515,7 @@ void DPM2D::setTwoParticleTest(double lx, double ly, double y0, double y1, doubl
     d_particleVel[1 * nDim + 1] = vel1;
     break;
   }
-  
+
   setLengthScaleToOne();
   if(cudaGetLastError()) cout << "DPM2D():: cudaGetLastError(): " << cudaGetLastError() << endl;
 }
@@ -1665,22 +1665,30 @@ void DPM2D::calcForceEnergy() {
   }
 }
 
-void DPM2D::calcForceEnergyGPU() {
+void DPM2D::calcShapeForceEnergy() {
   calcParticlesShape();
   calcParticlesPositions();
   // shape variables
-  const double *a0 = thrust::raw_pointer_cast(&d_a0[0]);
-  const double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
+	const double *a0 = thrust::raw_pointer_cast(&d_a0[0]);
+	const double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
   const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-  const double *theta0 = thrust::raw_pointer_cast(&d_theta0[0]);
+	const double *theta0 = thrust::raw_pointer_cast(&d_theta0[0]);
   // dynamical variables
   const double *area = thrust::raw_pointer_cast(&d_area[0]);
   const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-  double *force = thrust::raw_pointer_cast(&d_force[0]);
-  double *energy = thrust::raw_pointer_cast(&d_energy[0]);
+	double *force = thrust::raw_pointer_cast(&d_force[0]);
+	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
   // compute shape force
   kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, pos, force, energy);
+}
+
+void DPM2D::calcForceEnergyGPU() {
+  calcShapeForceEnergy();
+  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
+  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+  double *force = thrust::raw_pointer_cast(&d_force[0]);
+  double *energy = thrust::raw_pointer_cast(&d_energy[0]);
   double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
   thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
   switch (simControl.interactionType) {
@@ -1856,7 +1864,7 @@ void DPM2D::calcVertexVertexInteractionOMP() {
             if (overlap > 0) {
               addForce = true;
               gradMultiple = ec * overlap / radSum;
-              epot = (0.5 * ec * overlap * overlap);
+              epot = (0.5 * ec * overlap * overlap) * 0.5;
             }
           break;
           case simControlStruct::potentialEnum::wca:
@@ -1877,7 +1885,7 @@ void DPM2D::calcVertexVertexInteractionOMP() {
               d_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
               d_force[otherId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
             }
-            d_energy[vertexId] += epot * 0.5;
+            d_energy[vertexId] += epot;
           }
         }
       }
@@ -2155,9 +2163,9 @@ void DPM2D::calcSmoothInteractionOMP() {
               d_force[previousId * nDim + 1] += gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], d_boxSize[0]) - absCross * pbcDistance(previousPos[1], otherPos[1], d_boxSize[1]) / (length * length)) / length; 
             }
             #pragma omp atomic
-            d_particleEnergy[particleId] += epot * 0.5;
+            d_particleEnergy[particleId] += epot;
             #pragma omp atomic
-            d_particleEnergy[otherParticleId] += epot * 0.5;
+            d_particleEnergy[otherParticleId] += epot;
           }
         } else if(projection <= 0) {
           // check that previous vertex is not already interacting with this vertex through a segment
@@ -2209,9 +2217,9 @@ void DPM2D::calcSmoothInteractionOMP() {
                 }
               }
               #pragma omp atomic
-              d_particleEnergy[particleId] += epot * 0.5;
+              d_particleEnergy[particleId] += epot;
               #pragma omp atomic
-              d_particleEnergy[otherParticleId] += epot * 0.5;
+              d_particleEnergy[otherParticleId] += epot;
             }
           }
         }
@@ -2257,7 +2265,7 @@ void DPM2D::calcCellListSmoothInteraction() {
       //cellIdy = h_cellIndexList[vertexId * nDim + 1];
       cellIdx = static_cast<long>(thisPos[0] / cellSize);
       cellIdy = static_cast<long>(thisPos[1] / cellSize);
-      // loop over neighboring cells 
+      // loop over neighboring cells
       for (dx = -1; dx <= 1; dx++) {
         for (dy = -1; dy <= 1; dy++) {
           otherCellId = getNeighborCellId(cellIdx, cellIdy, dx, dy);
@@ -2619,7 +2627,7 @@ void DPM2D::fillLinkedList() {
     //printf("vertexId: %ld cellId %ld \n", vertexId, cId);
     // link to the previous occupant of the list or -1 if it is the first in the cell
     h_linkedList[vertexId] = h_header[cId];
-    // the last vertex (at the end of the loop) is the header 
+    // the last vertex (at the end of the loop) is the header
     h_header[cId] = vertexId;
     h_cellIndexList[vertexId * nDim] = cIdx;
     h_cellIndexList[vertexId * nDim + 1] = cIdy;

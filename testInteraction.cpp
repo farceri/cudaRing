@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double LJcutoff = 4, cutoff = 0.5, cutDistance, timeStep = atof(argv[2]), sigma, timeUnit, size;
   double sigma0 = 1, sigma1 = 3, lx = 10, ly = 10, vel1 = -0.1, y0 = 0.5, y1 = 0.7, epot, ekin;
-  double ea = 100, el = 1, eb = 0.1, ec = 1;
+  double ea = 1e05, el = 20, eb = 0, ec = 1;
   std::string outDir, energyFile, inDir = argv[1], currentDir, dirSample;
   // initialize sp object
 	DPM2D dp(numParticles, nDim, numVertexPerParticle);
@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
   }
   dp.setPotentialType(simControlStruct::potentialEnum::wca);
   dp.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
-  dp.setConcavityType(simControlStruct::concavityEnum::off);
+  dp.setConcavityType(simControlStruct::concavityEnum::on);
   dp.setEnergyCosts(ea, el, eb, ec);
   if(lj == true) {
     dp.setPotentialType(simControlStruct::potentialEnum::lennardJones);
@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
     cout << "Setting WCA potential" << endl;
   } else {
     cout << "Setting Harmonic potential" << endl;
-    dirSample = "wca-smooth-gpu-bend/";
+    dirSample = "smooth/";
   }
   if(alltoall == true) {
     dp.setNeighborType(simControlStruct::neighborEnum::allToAll);
