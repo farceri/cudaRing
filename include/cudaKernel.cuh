@@ -387,21 +387,21 @@ inline __device__ double calcBendingForceEnergy(const double* preSegment, const 
 }
 
 // this, next and previous are for vertices belonging to the same particle
-__global__ void kernelCalcShapeForceEnergy(const double* a0, const double* area, const double* particlePos, const double* l0, const double* theta0, const double* pos, double* force, double* energy) {
+__global__ void kernelCalcShapeForceEnergy(const double* a0, const double* area, const double* particlePos, const double* l0, const double* theta0, const double* theta, const double* pos, double* force, double* energy) {
 	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	long particleId = d_particleIdListPtr[vertexId];
   	if (vertexId < d_numVertices) {
 		double vertexPos[MAXDIM], nextPos[MAXDIM], previousPos[MAXDIM], partPos[MAXDIM];
-		double secondNextPos[MAXDIM], secondPreviousPos[MAXDIM];
+		//double secondNextPos[MAXDIM], secondPreviousPos[MAXDIM];
 		double nextSegment[MAXDIM], previousSegment[MAXDIM];
-		double secondNextSegment[MAXDIM], secondPreviousSegment[MAXDIM];
+		//double secondNextSegment[MAXDIM], secondPreviousSegment[MAXDIM];
 		auto particleArea = area[particleId];
 		auto shapeEnergy = 0.0;
 		// get interacting vertices' indices
 		auto nextId = getNextId(vertexId, particleId);
 	  	auto previousId = getPreviousId(vertexId, particleId);
-	  	auto secondNextId = getNextId(nextId, particleId);
-	  	auto secondPreviousId = getPreviousId(previousId, particleId);
+	  	//auto secondNextId = getNextId(nextId, particleId);
+	  	//auto secondPreviousId = getPreviousId(previousId, particleId);
 		//printf("vertexId: %ld, previousId: %ld, nextId: %ld \n", vertexId, previousId, nextId);
 		// zero out the existing force and get particlePos
     	for (long dim = 0; dim < d_nDim; dim++) {
@@ -428,13 +428,16 @@ __global__ void kernelCalcShapeForceEnergy(const double* a0, const double* area,
 			break;
 		}
 		// bending force
-		getRelativeVertexPos(secondNextId, pos, secondNextPos, partPos);
-	  	getRelativeVertexPos(secondPreviousId, pos, secondPreviousPos, partPos);
-		getSegment(secondNextPos, nextPos, secondNextSegment);
-		getSegment(previousPos, secondPreviousPos, secondPreviousSegment);
-	  	auto previousAngleDelta = calcAngle(previousSegment, secondPreviousSegment) - theta0[previousId];
-	  	auto thisAngleDelta = calcAngle(nextSegment, previousSegment) - theta0[vertexId];
-	 	auto nextAngleDelta = calcAngle(secondNextSegment, nextSegment) - theta0[nextId];
+		//getRelativeVertexPos(secondNextId, pos, secondNextPos, partPos);
+	  	//getRelativeVertexPos(secondPreviousId, pos, secondPreviousPos, partPos);
+		//getSegment(secondNextPos, nextPos, secondNextSegment);
+		//getSegment(previousPos, secondPreviousPos, secondPreviousSegment);
+	  	//auto previousAngleDelta = calcAngle(previousSegment, secondPreviousSegment) - theta0[previousId];
+	  	//auto thisAngleDelta = calcAngle(nextSegment, previousSegment) - theta0[vertexId];
+	 	//auto nextAngleDelta = calcAngle(secondNextSegment, nextSegment) - theta0[nextId];
+	  	auto previousAngleDelta = theta[previousId] - theta0[previousId];
+	  	auto thisAngleDelta = theta[vertexId] - theta0[vertexId];
+	 	auto nextAngleDelta = theta[nextId] - theta0[nextId];
 		shapeEnergy += calcBendingForceEnergy(previousSegment, nextSegment, thisAngleDelta, nextAngleDelta, previousAngleDelta, &force[vertexId*d_nDim]);
     	energy[vertexId] = shapeEnergy;
 		//printf("\n shape: vertexId %ld \t fx: %.13e \t fy: %.13e \n", vertexId, force[vertexId*d_nDim], force[vertexId*d_nDim+1]);
@@ -870,14 +873,14 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 					getVertexPos(secondPreviousId, pos, secondPreviousPos);
 					getDelta(previousPos, secondPreviousPos, previousSegment);
 					length = calcNorm(previousSegment);
-					auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
+					//auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
 					switch (d_simControl.concavityType) {
 						case simControlStruct::concavityEnum::off:
-						if(previousProj > 1) {
-							interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-							atomicAdd(&pEnergy[particleId], interaction);
-							atomicAdd(&pEnergy[otherParticleId], interaction);
-						}
+						//if(previousProj > 1) {
+						interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+						atomicAdd(&pEnergy[particleId], interaction);
+						atomicAdd(&pEnergy[otherParticleId], interaction);
+						//}
 						break;
 						case simControlStruct::concavityEnum::on:
 						// check if the vertex-vertex interaction is concave or convex
@@ -903,7 +906,7 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 								interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
 								atomicAdd(&pEnergy[particleId], interaction);
 								atomicAdd(&pEnergy[otherParticleId], interaction);
-							} else if(previousProj > 1) {
+							} else {//if(previousProj > 1) {
 								interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
 								atomicAdd(&pEnergy[particleId], interaction);
 								atomicAdd(&pEnergy[otherParticleId], interaction);
@@ -1347,7 +1350,7 @@ __global__ void kernelCalcVertexSmoothForceTorque(const double* rad, const doubl
     	auto otherRad = 0.0;
 		auto interaction = 0.0;
 		double thisPos[MAXDIM], otherPos[MAXDIM], partPos[MAXDIM], previousPos[MAXDIM], segment[MAXDIM], relSegment[MAXDIM];
-		double secondPreviousPos[MAXDIM], previousSegment[MAXDIM], projPos[MAXDIM], interSegment[MAXDIM];
+		double secondPreviousPos[MAXDIM], previousSegment[MAXDIM], projPos[MAXDIM];
 		for (long dim = 0; dim < d_nDim; dim++) {
 			force[vertexId * d_nDim + dim] = 0;
 		}
@@ -1497,26 +1500,29 @@ __global__ void kernelCalcPerParticleStressTensor(const double* rad, const doubl
 }
 
 //works only for 2D
-__global__ void kernelCalcParticlesShape(const double* pos, double* length, double* area, double* perimeter) {
+__global__ void kernelCalcParticleShape(const double* pos, double* length, double* theta, double* area, double* perimeter) {
   	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (particleId < d_numParticles) {
-		auto tempPerimeter = 0.0;
+		auto segmentLength = 0.0;
 		auto tempArea = 0.0;
 		perimeter[particleId] = 0.0;
 		auto nextId = -1;
 		auto firstId = d_firstVertexInParticleIdPtr[particleId];
-		double delta[MAXDIM], nextPos[MAXDIM], currentPos[MAXDIM];
+		double delta[MAXDIM], nextPos[MAXDIM], currentPos[MAXDIM], nextSegment[MAXDIM], previousPos[MAXDIM], previousSegment[MAXDIM];
 		getVertexPos(firstId, pos, currentPos);
 		// compute particle area via shoe-string method
 		for (long currentId = firstId; currentId < firstId + d_numVertexInParticleListPtr[particleId]; currentId++) {
 			nextId = getNextId(currentId, particleId);
-			tempPerimeter = 0;
+			segmentLength = 0.0;
 			for (long dim = 0; dim < d_nDim; dim++) {
 				delta[dim] = pbcDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
 				nextPos[dim] = currentPos[dim] + delta[dim];
-				tempPerimeter += delta[dim] * delta[dim];
+				segmentLength += delta[dim] * delta[dim];
 			}
-			length[currentId] = sqrt(tempPerimeter);
+			getSegment(nextPos, currentPos, nextSegment);
+            getSegment(currentPos, previousPos, previousSegment);
+            theta[currentId] = calcAngle(nextSegment, previousSegment);
+			length[currentId] = sqrt(segmentLength);
 			perimeter[particleId] += length[currentId];
 			tempArea += currentPos[0] * nextPos[1] - nextPos[0] * currentPos[1];
 			for (long dim = 0; dim < d_nDim; dim++) {
@@ -1527,7 +1533,7 @@ __global__ void kernelCalcParticlesShape(const double* pos, double* length, doub
 	}
 }
 
-__global__ void kernelCalcParticlesPositions(const double* pos, double* particlePos) {
+__global__ void kernelCalcParticlePositions(const double* pos, double* particlePos) {
 	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
 	if (particleId < d_numParticles) {
 		calcParticlePos(particleId, pos, &particlePos[particleId*d_nDim]);

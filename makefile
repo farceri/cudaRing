@@ -67,11 +67,10 @@ EXE = compressNVE
 # run dynamics
 #EXE = runNVE
 #EXE = runNVT
-#EXE = runRigidNVE
-#EXE = runRigidNVT
 #EXE = runActive
 #EXE = runActivePlastic
-#EXE = runActiveRigid
+#EXE = runRigidNVE
+#EXE = runRigidNVT
 
 # Object files:
 OBJS = $(OBJ_DIR)/$(EXE).o $(OBJ_DIR)/DPM2D.o $(OBJ_DIR)/BumpyEllipse.o $(OBJ_DIR)/FIRE.o $(OBJ_DIR)/Simulator.o $(OBJ_DIR)/DPM3D.o

@@ -112,6 +112,7 @@ void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
   d_perimeter.resize(numParticles_);
   d_a0.resize(numParticles_);
   d_area.resize(numParticles_);
+  d_theta.resize(numVertices_);
   d_theta0.resize(numVertices_);
   d_particleRad.resize(numParticles_);
   d_particlePos.resize(numParticles_ * nDim);
@@ -121,6 +122,7 @@ void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
   thrust::fill(d_perimeter.begin(), d_perimeter.end(), double(0));
   thrust::fill(d_a0.begin(), d_a0.end(), double(0));
   thrust::fill(d_area.begin(), d_area.end(), double(0));
+  thrust::fill(d_theta.begin(), d_theta.end(), double(0));
   thrust::fill(d_theta0.begin(), d_theta0.end(), double(0));
   thrust::fill(d_particleRad.begin(), d_particleRad.end(), double(0));
   thrust::fill(d_particlePos.begin(), d_particlePos.end(), double(0));
@@ -148,6 +150,7 @@ void DPM2D::initParticleVariables(long numParticles_) {
   d_particleVel.resize(numParticles_ * nDim);
   d_particleForce.resize(numParticles_ * nDim);
   d_particleEnergy.resize(numParticles_);
+  h_particleEnergy.resize(numParticles_); //HOST
   d_particleDisp.resize(numParticles_);
   d_particleLastPos.resize(numParticles_ * nDim);
   thrust::fill(d_particleVel.begin(), d_particleVel.end(), double(0));
@@ -572,6 +575,12 @@ thrust::host_vector<double> DPM2D::getSegmentLengths() {
   return lengthFromDevice;
 }
 
+thrust::host_vector<double> DPM2D::getSegmentAngles() {
+  thrust::host_vector<double> thetaFromDevice;
+  thetaFromDevice = d_theta;
+  return thetaFromDevice;
+}
+
 void DPM2D::setAreas(thrust::host_vector<double> &area_) {
   d_area = area_;
 }
@@ -614,22 +623,23 @@ double DPM2D::getVertexRadius() {
 
 
 //*************************** particle variables *****************************//
-void DPM2D::calcParticlesShape() {
+void DPM2D::calcParticleShape() {
   // area and perimeter pointers
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
   double *length = thrust::raw_pointer_cast(&d_length[0]);
+  double *theta = thrust::raw_pointer_cast(&d_theta[0]);
   double *area = thrust::raw_pointer_cast(&d_area[0]);
   double *perimeter = thrust::raw_pointer_cast(&d_perimeter[0]);
 
-  kernelCalcParticlesShape<<<dimGrid, dimBlock>>>(pos, length, area, perimeter);
+  kernelCalcParticleShape<<<dimGrid, dimBlock>>>(pos, length, theta, area, perimeter);
 }
 
-void DPM2D::calcParticlesPositions() {
+void DPM2D::calcParticlePositions() {
   // vertex and particle position pointers
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
   double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
 
-  kernelCalcParticlesPositions<<<dimGrid, dimBlock>>>(pos, particlePos);
+  kernelCalcParticlePositions<<<dimGrid, dimBlock>>>(pos, particlePos);
 }
 
 void DPM2D::setDefaultParticleRadii() {
@@ -1324,7 +1334,7 @@ void DPM2D::scaleBoxSize(double scale) {
 }
 
 void DPM2D::scaleVertexPositions(double scale) {
-  //calcParticlesPositions();
+  //calcParticlePositions();
   double* pos = thrust::raw_pointer_cast(&d_pos[0]);
   const double* particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
   kernelScaleVertexPositions<<<dimGrid, dimBlock>>>(particlePos, pos, scale);
@@ -1676,8 +1686,8 @@ void DPM2D::calcForceEnergy() {
 }
 
 void DPM2D::calcForceEnergyGPU() {
-  calcParticlesShape();
-  calcParticlesPositions();
+  calcParticleShape();
+  calcParticlePositions();
   // shape variables
 	const double *a0 = thrust::raw_pointer_cast(&d_a0[0]);
 	const double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
@@ -1685,12 +1695,13 @@ void DPM2D::calcForceEnergyGPU() {
 	const double *theta0 = thrust::raw_pointer_cast(&d_theta0[0]);
   // dynamical variables
   const double *area = thrust::raw_pointer_cast(&d_area[0]);
+	const double *theta = thrust::raw_pointer_cast(&d_theta[0]);
   const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
 	double *force = thrust::raw_pointer_cast(&d_force[0]);
 	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
   // compute shape force
-  kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, pos, force, energy);
+  kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, theta, pos, force, energy);
   thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
   double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
   // compute interaction
@@ -1711,8 +1722,8 @@ void DPM2D::calcForceEnergyGPU() {
 }
 
 void DPM2D::calcShapeForceEnergy() {
-  calcParticlesShape();
-  calcParticlesPositions();
+  calcParticleShape();
+  calcParticlePositions();
   // shape variables
 	const double *a0 = thrust::raw_pointer_cast(&d_a0[0]);
 	const double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
@@ -1720,12 +1731,13 @@ void DPM2D::calcShapeForceEnergy() {
 	const double *theta0 = thrust::raw_pointer_cast(&d_theta0[0]);
   // dynamical variables
   const double *area = thrust::raw_pointer_cast(&d_area[0]);
+	const double *theta = thrust::raw_pointer_cast(&d_theta[0]);
   const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
 	double *force = thrust::raw_pointer_cast(&d_force[0]);
 	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
   // compute shape force
-  kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, pos, force, energy);
+  kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, theta, pos, force, energy);
 }
 
 void DPM2D::calcForceEnergyCPU() {
@@ -1851,7 +1863,7 @@ void DPM2D::calcVertexVertexInteractionOMP() {
         double radSum = thisRad + otherRad;
         double distanceSq = 0;
         for (long dim = 0; dim < nDim; dim++) {
-          delta[dim] = pbcDistance(thisPos[dim], otherPos[dim], d_boxSize[dim]);
+          delta[dim] = pbcDistance(thisPos[dim], otherPos[dim], h_boxSize[dim]);
           distanceSq += delta[dim] * delta[dim];
         }
         double distance = sqrt(distanceSq);
@@ -2076,41 +2088,46 @@ void DPM2D::calcSmoothInteraction() {
 }
 
 void DPM2D::calcSmoothInteractionOMP() {
-  #pragma omp parallel for default(none) shared(d_pos, d_rad, d_particleIdList, d_neighborList, d_maxNeighborList, d_boxSize, d_force, d_energy, d_particleEnergy, simControl, ec, WCAcut, numVertices, neighborListSize, nDim)
+  h_pos = d_pos;
+  h_force = d_force;
+  h_energy = d_energy;
+  h_particleEnergy = d_particleEnergy;
+  //#pragma omp parallel for default(none) shared(d_pos, d_rad, d_particleIdList, d_neighborList, d_maxNeighborList, d_boxSize, d_force, d_energy, d_particleEnergy, simControl, ec, WCAcut, numVertices, neighborListSize, nDim)
+  #pragma omp parallel for shared(h_force, h_energy, h_particleEnergy)
   for (long vertexId = 0; vertexId < numVertices; vertexId++) {
     std::vector<double> thisPos(MAXDIM), otherPos(MAXDIM), previousPos(MAXDIM), secondPreviousPos(MAXDIM);
     std::vector<double> delta(MAXDIM), segment(MAXDIM), projPos(MAXDIM), relSegment(MAXDIM);
     double distance, gradMultiple, epot, overlap, ratio, ratio6, ratio12;
     long particleId = d_particleIdList[vertexId];
     for (long dim = 0; dim < nDim; dim++) {
-      thisPos[dim] = d_pos[vertexId * nDim + dim];
+      thisPos[dim] = h_pos[vertexId * nDim + dim];
     }
-    double thisRad = d_rad[vertexId];
-    for (long nListId = 0; nListId < d_maxNeighborList[vertexId]; nListId++) {
-      long otherId = d_neighborList[vertexId * neighborListSize + nListId];
+    double thisRad = h_rad[vertexId];
+    for (long nListId = 0; nListId < h_maxNeighborList[vertexId]; nListId++) {
+      long otherId = h_neighborList[vertexId * neighborListSize + nListId];
       if ((vertexId != otherId) && (otherId != -1)) {
         for (long dim = 0; dim < nDim; dim++) {
-          otherPos[dim] = d_pos[otherId * nDim + dim];
+          otherPos[dim] = h_pos[otherId * nDim + dim];
         }
-        double otherRad = d_rad[otherId];
+        double otherRad = h_rad[otherId];
         double radSum = thisRad + otherRad;
         // get previous vertex
-        long otherParticleId = d_particleIdList[otherId];
+        long otherParticleId = h_particleIdList[otherId];
         long previousId = getPreviousId(otherId, otherParticleId);
         double distanceSq = 0;
         for (long dim = 0; dim < nDim; dim++) {
           previousPos[dim] = d_pos[previousId * nDim + dim];
-          segment[dim] = pbcDistance(otherPos[dim], previousPos[dim], d_boxSize[dim]);
+          segment[dim] = pbcDistance(otherPos[dim], previousPos[dim], h_boxSize[dim]);
           distanceSq += segment[dim] * segment[dim];
         }
         double length = sqrt(distanceSq);
         // this takes into account periodic boundaries with respect to the segment
         for (long dim = 0; dim < nDim; dim++) {
-          relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], d_boxSize[dim]);
+          relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
           thisPos[dim] = previousPos[dim] + relSegment[dim];
         }
         // compute projection on the line between other and previous
-        double projection = (pbcDistance(thisPos[0], previousPos[0], d_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], d_boxSize[0]) + pbcDistance(thisPos[1], previousPos[1], d_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], d_boxSize[1])) / (length * length);
+        double projection = (pbcDistance(thisPos[0], previousPos[0], h_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], h_boxSize[1])) / (length * length);
         //projection = getProjection(thisPos, otherPos, previousPos, length);
         //cout << "projection: " << projection << " length: " << length << endl;
         if(projection > 0 && projection <= 1) {
@@ -2120,7 +2137,7 @@ void DPM2D::calcSmoothInteractionOMP() {
           }
           distanceSq = 0;
           for (long dim = 0; dim < nDim; dim++) {
-            delta[dim] = pbcDistance(thisPos[dim], projPos[dim], d_boxSize[dim]);
+            delta[dim] = pbcDistance(thisPos[dim], projPos[dim], h_boxSize[dim]);
             distanceSq += delta[dim] * delta[dim];
           }
           distance = sqrt(distanceSq);
@@ -2146,26 +2163,26 @@ void DPM2D::calcSmoothInteractionOMP() {
             break;
           }
           if(addForce == true) {
-            double cross = pbcDistance(previousPos[0], otherPos[0], d_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], d_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], d_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], d_boxSize[1]);
+            double cross = pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], h_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]);
             //cross = calcCross(thisPos, otherPos, previousPos);
             double absCross = fabs(cross);
             double sign = absCross / cross;
             #pragma omp critical
             {
               // this vertex
-              d_force[vertexId * nDim] += gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], d_boxSize[1]) / length;
-              d_force[vertexId * nDim + 1] += gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], d_boxSize[0]) / length;
+              h_force[vertexId * nDim] += gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / length;
+              h_force[vertexId * nDim + 1] += gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) / length;
               // other vertex
-              d_force[otherId * nDim] += gradMultiple * (sign * pbcDistance(thisPos[1], previousPos[1], d_boxSize[1]) + absCross * pbcDistance(previousPos[0], otherPos[0], d_boxSize[0]) / (length * length)) / length;
-              d_force[otherId * nDim + 1] += gradMultiple * (sign * pbcDistance(previousPos[0], thisPos[0], d_boxSize[0]) + absCross * pbcDistance(previousPos[1], otherPos[1], d_boxSize[1]) / (length * length)) / length;
+              h_force[otherId * nDim] += gradMultiple * (sign * pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) + absCross * pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) / (length * length)) / length;
+              h_force[otherId * nDim + 1] += gradMultiple * (sign * pbcDistance(previousPos[0], thisPos[0], h_boxSize[0]) + absCross * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / (length * length)) / length;
               // previous vertex
-              d_force[previousId * nDim] += gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], d_boxSize[1]) - absCross * pbcDistance(previousPos[0], otherPos[0], d_boxSize[0]) / (length * length)) / length;
-              d_force[previousId * nDim + 1] += gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], d_boxSize[0]) - absCross * pbcDistance(previousPos[1], otherPos[1], d_boxSize[1]) / (length * length)) / length; 
+              h_force[previousId * nDim] += gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - absCross * pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) / (length * length)) / length;
+              h_force[previousId * nDim + 1] += gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], h_boxSize[0]) - absCross * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / (length * length)) / length; 
             }
             #pragma omp atomic
-            d_particleEnergy[particleId] += epot;
+            h_particleEnergy[particleId] += epot;
             #pragma omp atomic
-            d_particleEnergy[otherParticleId] += epot;
+            h_particleEnergy[otherParticleId] += epot;
           }
         } else if(projection <= 0) {
           // check that previous vertex is not already interacting with this vertex through a segment
@@ -2173,59 +2190,62 @@ void DPM2D::calcSmoothInteractionOMP() {
           distanceSq = 0;
           for (long dim = 0; dim < nDim; dim++) {
             secondPreviousPos[dim] = d_pos[secondPreviousId * nDim + dim];
-            delta[dim] = pbcDistance(secondPreviousPos[dim], previousPos[dim], d_boxSize[dim]);
+            delta[dim] = pbcDistance(secondPreviousPos[dim], previousPos[dim], h_boxSize[dim]);
             distanceSq += delta[dim] * delta[dim];
           }
           length = sqrt(distanceSq);
-          double previousProj = (pbcDistance(thisPos[0], secondPreviousPos[0], d_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], d_boxSize[0]) + pbcDistance(thisPos[1], secondPreviousPos[1], d_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], d_boxSize[1])) / (length * length);
+          //double previousProj = (pbcDistance(thisPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (length * length);
 					//previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
-          if(previousProj > 1) {
-            distanceSq = 0;
-            for (long dim = 0; dim < nDim; dim++) {
-              delta[dim] = pbcDistance(thisPos[dim], previousPos[dim], d_boxSize[dim]);
-              distanceSq += delta[dim] * delta[dim];
-            }
-            distance = sqrt(distanceSq);
-            bool addForce = false;
-            switch (simControl.potentialType) {
-              case simControlStruct::potentialEnum::harmonic:
-              overlap = 1 - distance / radSum;
-              if(overlap > 0) {
-                addForce = true;
-                gradMultiple = ec * overlap / radSum;
-                epot = (0.5 * ec * overlap * overlap);
-              }
-              break;
-              case simControlStruct::potentialEnum::wca:
-              if(distance <= (WCAcut * radSum)) {
-                addForce = true;
-                ratio = radSum / distance;
-                ratio6 = pow(ratio, 6);
-                ratio12 = ratio6 * ratio6;
-                gradMultiple = 4 * ec * (12 * ratio12 - 6 * ratio6) / distance;
-                epot = 0.5 * ec * (4 * (ratio12 - ratio6) + 1);
-              }
-              break;
-            }
-            if(addForce == true) {
-              //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
-              #pragma omp critical
-              {
-                for (long dim = 0; dim < nDim; dim++) {
-                  d_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
-                  d_force[previousId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
-                }
-              }
-              #pragma omp atomic
-              d_particleEnergy[particleId] += epot;
-              #pragma omp atomic
-              d_particleEnergy[otherParticleId] += epot;
-            }
+          //if(previousProj > 1) {
+          distanceSq = 0;
+          for (long dim = 0; dim < nDim; dim++) {
+            delta[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
+            distanceSq += delta[dim] * delta[dim];
           }
+          distance = sqrt(distanceSq);
+          bool addForce = false;
+          switch (simControl.potentialType) {
+            case simControlStruct::potentialEnum::harmonic:
+            overlap = 1 - distance / radSum;
+            if(overlap > 0) {
+              addForce = true;
+              gradMultiple = ec * overlap / radSum;
+              epot = (0.5 * ec * overlap * overlap);
+            }
+            break;
+            case simControlStruct::potentialEnum::wca:
+            if(distance <= (WCAcut * radSum)) {
+              addForce = true;
+              ratio = radSum / distance;
+              ratio6 = pow(ratio, 6);
+              ratio12 = ratio6 * ratio6;
+              gradMultiple = 4 * ec * (12 * ratio12 - 6 * ratio6) / distance;
+              epot = 0.5 * ec * (4 * (ratio12 - ratio6) + 1);
+            }
+            break;
+          }
+          if(addForce == true) {
+            //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
+            #pragma omp critical
+            {
+              for (long dim = 0; dim < nDim; dim++) {
+                h_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
+                h_force[previousId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
+              }
+            }
+            #pragma omp atomic
+            h_particleEnergy[particleId] += epot;
+            #pragma omp atomic
+            h_particleEnergy[otherParticleId] += epot;
+          }
+          //}
         }
       }
     }
   }
+  d_force = h_force;
+  d_energy = h_energy;
+  d_particleEnergy = h_particleEnergy;
 }
 
 long DPM2D::getNeighborCellId(long cellIdx, long cellIdy, long dx, long dy) {
@@ -2427,7 +2447,7 @@ void DPM2D::calcVertexSmoothForceTorque() {
 }
 
 void DPM2D::calcRigidForceEnergy() {
-  calcParticlesPositions();
+  calcParticlePositions();
   switch (simControl.interactionType) {
     case simControlStruct::interactionEnum::vertexVertex:
     calcVertexForceTorque();
@@ -2837,7 +2857,7 @@ void DPM2D::initLangevin(double Temp, double gamma, bool readState) {
   resetLastPositions();
   d_particleInitPos.resize(numParticles * nDim);
   thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlesPositions();
+  calcParticlePositions();
   d_particleInitPos = d_particlePos;
   if(readState == false) {
     //this->sim_->injectKineticEnergy();
@@ -2865,7 +2885,7 @@ void DPM2D::initLangevin2(double Temp, double gamma, bool readState) {
   resetLastPositions();
   d_particleInitPos.resize(numParticles * nDim);
   thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlesPositions();
+  calcParticlePositions();
   d_particleInitPos = d_particlePos;
   if(readState == false) {
     //this->sim_->injectKineticEnergy();
@@ -2894,7 +2914,7 @@ void DPM2D::initActiveLangevin(double Temp, double Dr, double driving, double ga
   resetLastPositions();
   d_particleInitPos.resize(numParticles * nDim);
   thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlesPositions();
+  calcParticlePositions();
   d_particleInitPos = d_particlePos;
   if(readState == false) {
     computeParticleAngleFromVel();
@@ -2914,7 +2934,7 @@ void DPM2D::initNVE(double Temp, bool readState) {
   resetLastPositions();
   d_particleInitPos.resize(numParticles * nDim);
   thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlesPositions();
+  calcParticlePositions();
   d_particleInitPos = d_particlePos;
   if(readState == false) {
     this->sim_->injectKineticEnergy();
@@ -2937,7 +2957,7 @@ void DPM2D::initBrownian(double Temp, double gamma, bool readState) {
   }
   d_particleInitPos.resize(numParticles * nDim);
   thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlesPositions();
+  calcParticlePositions();
   d_particleInitPos = d_particlePos;
   cout << "DPM2D::initBrownian:: current temperature: " << setprecision(12) << getParticleTemperature() << endl;
 }
@@ -2956,7 +2976,7 @@ void DPM2D::initActiveBrownian(double Dr, double driving, bool readState) {
   }
   d_particleInitPos.resize(numParticles * nDim);
   thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlesPositions();
+  calcParticlePositions();
   d_particleInitPos = d_particlePos;
   cout << "DPM2D::initActiveBrownian:: current temperature: " << setprecision(12) << getTemperature() << endl;
 }
@@ -2974,7 +2994,7 @@ void DPM2D::initActiveBrownianPlastic(double Dr, double driving, double gamma, b
   resetLastPositions();
   d_particleInitPos.resize(numParticles * nDim);
   thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlesPositions();
+  calcParticlePositions();
   d_particleInitPos = d_particlePos;
   if(readState == false) {
     this->sim_->injectKineticEnergy();
@@ -3004,7 +3024,7 @@ void DPM2D::initRigidLangevin(double Temp, double gamma, bool readState) {
   resetLastPositions();
   d_particleInitPos.resize(numParticles * nDim);
   thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlesPositions();
+  calcParticlePositions();
   d_particleInitPos = d_particlePos;
   if(readState == false) {
     this->sim_->injectKineticEnergy();
@@ -3028,7 +3048,7 @@ void DPM2D::initRigidNVE(double Temp, bool readState) {
   resetLastPositions();
   d_particleInitPos.resize(numParticles * nDim);
   thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlesPositions();
+  calcParticlePositions();
   d_particleInitPos = d_particlePos;
   if(readState == false) {
     this->sim_->injectKineticEnergy();

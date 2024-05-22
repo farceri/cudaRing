@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
   double sigma, polydispersity = 0.2, previousPhi, currentPhi = 0.2, deltaPhi = 5e-03, phiTh = 0.9;
   double cutDistance, cutoff = 0.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
   double Tinject = atof(argv[3]), maxDelta, scaleFactor, timeStep = atof(argv[2]), size;
-  double ea = 1e05, el = 100, eb = 1e-03, ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
+  double ea = 1e04, el = 50, eb = 2e-03, ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
   thrust::host_vector<double> boxSize(nDim);
   std::string outDir = argv[1], currentDir, inDir, energyFile;
   // fire paramaters: a_start, f_dec, f_inc, f_a, dt, dt_max, a
@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
   dpm.setEnergyCosts(ea, el, eb, ec);
   cout << "Energy scales: area " << ea << " segment " << el << " bending " << eb << " interaction " << ec << endl;
   numVertices = dpm.getNumVertices();
-  dpm.calcParticlesShape();
+  dpm.calcParticleShape();
   currentPhi = dpm.getPhi();
   cout << "Start compression: current packing fraction: " << dpm.getPhi() << " preferred: " << dpm.getPreferredPhi() << endl;
   previousPhi = currentPhi;

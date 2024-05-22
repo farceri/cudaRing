@@ -16,7 +16,7 @@ void BumpyEllipse::setRatio(double calA0) {
     // initialize vertices
     initEllipse(ratio_a_b);
 
-    calcParticlesShape();
+    calcParticleShape();
     // double currentCalA = 0;
     double currentCalA = d_perimeter[0] * d_perimeter[0] / (4 * PI * d_area[0]);
     while (!(currentCalA > calA0 * 0.999 && currentCalA < calA0 * 1.001))
@@ -26,7 +26,7 @@ void BumpyEllipse::setRatio(double calA0) {
         else
             ratio_a_b *= 1.001;
         initEllipse(ratio_a_b);
-        calcParticlesShape();
+        calcParticleShape();
         currentCalA = d_perimeter[0] * d_perimeter[0] / (4 * PI * d_area[0]);
     }
 }

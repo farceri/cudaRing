@@ -97,6 +97,7 @@ public:
   thrust::host_vector<double> h_rad; //HOST
   thrust::device_vector<double> d_l0;
   thrust::device_vector<double> d_length;
+  thrust::device_vector<double> d_theta;
   thrust::device_vector<double> d_perimeter;
   thrust::device_vector<double> d_l0Vel;
   thrust::device_vector<double> d_a0;
@@ -125,6 +126,7 @@ public:
   thrust::device_vector<double> d_particleVel;
   thrust::device_vector<double> d_particleForce;
   thrust::device_vector<double> d_particleEnergy;
+  thrust::host_vector<double> h_particleEnergy; //HOST
   thrust::device_vector<double> d_particleInitPos;
 	thrust::device_vector<double> d_particleDelta;
 
@@ -262,6 +264,8 @@ public:
 
   thrust::host_vector<double> getSegmentLengths();
 
+  thrust::host_vector<double> getSegmentAngles();
+
   void setAreas(thrust::host_vector<double> &area_);
   thrust::host_vector<double> getAreas();
 
@@ -280,9 +284,9 @@ public:
   double getVertexRadius();
 
   // particle variables
-  void calcParticlesShape();
+  void calcParticleShape();
 
-  void calcParticlesPositions();
+  void calcParticlePositions();
 
   void setDefaultParticleRadii();
 

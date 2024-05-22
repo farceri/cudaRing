@@ -106,6 +106,7 @@ public:
   NVE() = default;
   NVE(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
   
+  virtual void injectKineticEnergy();
   virtual void integrate();
 };
 

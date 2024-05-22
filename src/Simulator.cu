@@ -47,13 +47,13 @@ void Langevin::injectKineticEnergy() {
   thrust::transform(index_sequence_begin, index_sequence_begin + dpm_->numParticles * dpm_->nDim, d_thermalVel.begin(), gaussNum(0.f,noiseVar));
   long s_nDim(dpm_->nDim);
   auto r = thrust::counting_iterator<long>(0);
-  double *vel = thrust::raw_pointer_cast(&(dpm_->d_vel[0]));
-  const double *thermalVel = thrust::raw_pointer_cast(&d_thermalVel[0]);
+  double* vel = thrust::raw_pointer_cast(&(dpm_->d_vel[0]));
+  const double* thermalVel = thrust::raw_pointer_cast(&d_thermalVel[0]);
   const long* pIdList = thrust::raw_pointer_cast(&(dpm_->d_particleIdList[0]));
   //const long* nVList = thrust::raw_pointer_cast(&(dpm_->d_numVertexInParticleList[0]));
 
   auto injectThermalVel = [=] __device__ (long vertexId) {
-    long particleId = pIdList[vertexId];
+    auto particleId = pIdList[vertexId];
     #pragma unroll (MAXDIM)
 		for (long dim = 0; dim < s_nDim; dim++) {
       vel[vertexId * s_nDim + dim] = thermalVel[particleId * s_nDim + dim];
@@ -260,6 +260,40 @@ void NVE::integrate() {
   dpm_->calcForceEnergy();
   updateVelocity(0.5 * dpm_->dt);
   //conserveMomentum();
+}
+
+void NVE::injectKineticEnergy() {
+  // generate random numbers between 0 and Tscale for thermal noise
+  thrust::counting_iterator<long> index_sequence_begin(0);
+  thrust::transform(index_sequence_begin, index_sequence_begin + dpm_->numParticles * dpm_->nDim, d_thermalVel.begin(), gaussNum(0.f,noiseVar));
+  long s_nDim(dpm_->nDim);
+  auto r = thrust::counting_iterator<long>(0);
+  double* vel = thrust::raw_pointer_cast(&(dpm_->d_vel[0]));
+  const double* thermalVel = thrust::raw_pointer_cast(&d_thermalVel[0]);
+  const long* pIdList = thrust::raw_pointer_cast(&(dpm_->d_particleIdList[0]));
+
+  auto injectThermalVel = [=] __device__ (long vertexId) {
+    auto particleId = pIdList[vertexId];
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      vel[vertexId * s_nDim + dim] = thermalVel[particleId * s_nDim + dim];
+    }
+  };
+
+  thrust::for_each(r, r + dpm_->numVertices, injectThermalVel);
+
+  double scale = sqrt(config.Tinject / dpm_->getTemperature());
+  r = thrust::counting_iterator<long>(0);
+
+  auto scaleVel = [=] __device__ (long vertexId) {
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      vel[vertexId * s_nDim + dim] *= scale;
+    }
+  };
+
+  thrust::for_each(r, r + dpm_->numVertices, scaleVel);
+  //kernelConserveVertexMomentum<<<1, dpm_->dimBlock>>>(vel);
 }
 
 //******************************** brownian **********************************//

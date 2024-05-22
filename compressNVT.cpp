@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
   dpm.setEnergyCosts(ea, el, eb, ec);
   cout << "Energy scales: area " << ea << " segment " << el << " bending " << eb << " interaction " << ec << endl;
   numVertices = dpm.getNumVertices();
-  dpm.calcParticlesShape();
+  dpm.calcParticleShape();
   currentPhi = dpm.getPhi();
   cout << "Start compression: current packing fraction: " << dpm.getPhi() << " preferred: " << dpm.getPreferredPhi() << endl;
   previousPhi = currentPhi;
@@ -139,9 +139,6 @@ int main(int argc, char **argv) {
       searchStep = maxSearchStep; // exit condition
     } else {
       scaleFactor = sqrt((currentPhi + deltaPhi) / currentPhi);
-      //dpm.scaleVertices(scaleFactor);
-      //dpm.calcParticlesShape();
-      //dpm.scalePacking(dpm.getMeanParticleSize());
       dpm.scaleBoxSize(scaleFactor);
       boxSize = dpm.getBoxSize();
       currentPhi = dpm.getPhi();

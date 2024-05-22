@@ -290,7 +290,7 @@ public:
     // set length scales
     dpm_->setLengthScale();
     cout << "FileIO::readPackingFromDirectory: preferred phi: " << dpm_->getPreferredPhi() << " box-Lx: " << boxSize_[0] << ", Ly: " << boxSize_[1] << endl;
-    dpm_->calcParticlesShape();
+    dpm_->calcParticleShape();
   }
 
   void readRigidPackingFromDirectory(string dirName, long numParticles_, long nDim_) {
@@ -366,6 +366,7 @@ public:
     save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
     save1DFile(dirName + "restAreas.dat", dpm_->getRestAreas());
     save1DFile(dirName + "restLengths.dat", dpm_->getRestLengths());
+    save1DFile(dirName + "segmentAngles.dat", dpm_->getSegmentAngles());
     save1DFile(dirName + "restAngles.dat", dpm_->getRestAngles());
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
     save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);

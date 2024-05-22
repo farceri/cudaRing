@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
     std::experimental::filesystem::create_directory(currentDir);
     ioDPM.savePacking(currentDir);
   }
-  dpm.calcParticlesShape();
+  dpm.calcParticleShape();
   cout << "current packing fraction: " << setprecision(precision) << dpm.getPhi() << endl;
   numVertices = dpm.getNumVertices();
   thrust::host_vector<double> positions(numVertices * nDim);

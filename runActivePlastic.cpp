@@ -85,13 +85,13 @@ int main(int argc, char **argv) {
   // initialize simulation
   dpm.calcNeighborList(cutDistance);
   dpm.calcForceEnergy();
-  dpm.initActiveBrownianDampedL0(Dr, driving, gamma, readState);
+  dpm.initActiveBrownianPlastic(Dr, driving, gamma, readState);
   dpm.resetLastPositions();
   cutoff = (1 + cutDistance) * dpm.getMeanVertexRadius();
   dpm.setDisplacementCutoff(cutoff, cutDistance);
   // run AB integrator
   while(step != maxStep + 1) {
-    dpm.ActiveBrownianDampedL0Loop();
+    dpm.activeBrownianPlasticLoop();
     if(step % saveEnergyFreq == 0) {
       ioDPM.saveEnergy(step, timeStep);
       if(step % checkPointFreq == 0) {
@@ -112,14 +112,13 @@ int main(int argc, char **argv) {
       if(((step - (multiple-1) * checkPointFreq) % saveFreq) == 0) {
         currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
-        ioDPM.saveTrajectory(currentDir);
+        ioDPM.savePacking(currentDir);
       }
     }
     if(linSave == true) {
       if((step > (firstDecade * checkPointFreq)) && ((step % linFreq) == 0)) {
         currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
-        ioDPM.saveTrajectory(currentDir);
         ioDPM.savePacking(currentDir);
       }
     }
