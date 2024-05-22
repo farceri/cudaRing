@@ -68,6 +68,7 @@ DPM2D::DPM2D(long nParticles, long dim, long nVertexPerParticle) {
   cutDistance = 1;
   updateCount = 0;
   d_boxSize.resize(nDim);
+  h_boxSize.resize(nDim); //HOST
   thrust::fill(d_boxSize.begin(), d_boxSize.end(), double(1));
   d_stress.resize(nDim * nDim);
   thrust::fill(d_stress.begin(), d_stress.end(), double(0));
@@ -105,6 +106,7 @@ void DPM2D::printDeviceProperties() {
 
 void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
   d_rad.resize(numVertices_);
+  h_rad.resize(numVertices_); //HOST
   d_l0.resize(numVertices_);
   d_length.resize(numVertices_);
   d_perimeter.resize(numParticles_);
@@ -126,9 +128,12 @@ void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
 
 void DPM2D::initDynamicalVariables(long numVertices_) {
   d_pos.resize(numVertices_ * nDim);
+  h_pos.resize(numVertices_ * nDim); //HOST
   d_vel.resize(numVertices_ * nDim);
   d_force.resize(numVertices_ * nDim);
+  h_force.resize(numVertices_ * nDim); //HOST
   d_energy.resize(numVertices_);
+  h_energy.resize(numVertices_); //HOST
   d_lastPos.resize(numVertices_ * nDim);
   d_disp.resize(numVertices_);
   thrust::fill(d_pos.begin(), d_pos.end(), double(0));
@@ -197,6 +202,7 @@ void DPM2D::initNeighbors(long numVertices_) {
   maxNeighbors = 0;
   d_neighborList.resize(numVertices_);
   d_maxNeighborList.resize(numVertices_);
+  h_maxNeighborList.resize(numVertices_); //HOST
   thrust::fill(d_neighborList.begin(), d_neighborList.end(), -1L);
   thrust::fill(d_maxNeighborList.begin(), d_maxNeighborList.end(), maxNeighbors);
 }
@@ -244,6 +250,7 @@ void DPM2D::initParticleIdList() {
 
   long* particleIdList = thrust::raw_pointer_cast(&d_particleIdList[0]);
   cudaMemcpyToSymbol(d_particleIdListPtr, &particleIdList, sizeof(particleIdList));
+  h_particleIdList = d_particleIdList; //HOST
 }
 
 //**************************** setters and getters ***************************//
@@ -501,6 +508,7 @@ void DPM2D::setBoxSize(thrust::host_vector<double> &boxSize_) {
     d_boxSize = boxSize_;
     double* boxSize = thrust::raw_pointer_cast(&(d_boxSize[0]));
     cudaMemcpyToSymbol(d_boxSizePtr, &boxSize, sizeof(boxSize));
+    h_boxSize = d_boxSize; //HOST
   } else {
     cout << "DPM2D::setBoxSize: size of boxSize does not match nDim" << endl;
   }
@@ -1227,6 +1235,7 @@ void DPM2D::setPolySizeDistribution(double calA0_, double polyDispersity) {
       //cout << "vertexId: " << d_firstVertexInParticleId[particleId] + vertexId << " l0: " << d_l0[d_firstVertexInParticleId[particleId] + vertexId] << " rad: " << d_rad[d_firstVertexInParticleId[particleId] + vertexId] << endl;
     }
   }
+  h_rad = d_rad; //HOST
 }
 
 void DPM2D::setSinusoidalRestAngles(double thetaA, double thetaK) {
@@ -1262,6 +1271,7 @@ void DPM2D::setRandomParticles(double phi0, double extraRad_) {
     d_l0[vertexId] /= scale;
     d_rad[vertexId] /= scale;
   }
+  h_rad = d_rad; //HOST
   // need to set this otherwise forces are zeros
   setLengthScaleToOne();
   cout << "DPM2D::setRandomParticles: particle packing fraction: " << getPreferredPhi() << " " << areaSum/(boxSize[0] * boxSize[1]) << endl;
@@ -1665,6 +1675,41 @@ void DPM2D::calcForceEnergy() {
   }
 }
 
+void DPM2D::calcForceEnergyGPU() {
+  calcParticlesShape();
+  calcParticlesPositions();
+  // shape variables
+	const double *a0 = thrust::raw_pointer_cast(&d_a0[0]);
+	const double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
+  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
+	const double *theta0 = thrust::raw_pointer_cast(&d_theta0[0]);
+  // dynamical variables
+  const double *area = thrust::raw_pointer_cast(&d_area[0]);
+  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
+  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+	double *force = thrust::raw_pointer_cast(&d_force[0]);
+	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
+  // compute shape force
+  kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, pos, force, energy);
+  thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
+  double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
+  // compute interaction
+  switch (simControl.interactionType) {
+    case simControlStruct::interactionEnum::vertexVertex:
+    kernelCalcVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy);
+    break;
+    case simControlStruct::interactionEnum::vertexSmooth:
+    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy);
+    break;
+    case simControlStruct::interactionEnum::cellSmooth:
+    kernelCalcCellListSmoothInteraction<<<cellDimGrid, cellDimBlock>>>(rad, pos, force, pEnergy);
+    break;
+    case simControlStruct::interactionEnum::all:
+    kernelCalcAllToAllVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy);
+    break;
+  }
+}
+
 void DPM2D::calcShapeForceEnergy() {
   calcParticlesShape();
   calcParticlesPositions();
@@ -1683,48 +1728,17 @@ void DPM2D::calcShapeForceEnergy() {
   kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, pos, force, energy);
 }
 
-void DPM2D::calcForceEnergyGPU() {
-  calcShapeForceEnergy();
-  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-  double *force = thrust::raw_pointer_cast(&d_force[0]);
-  double *energy = thrust::raw_pointer_cast(&d_energy[0]);
-  double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
-  thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
-  switch (simControl.interactionType) {
-    case simControlStruct::interactionEnum::vertexVertex:
-    kernelCalcVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy);
-    break;
-    case simControlStruct::interactionEnum::vertexSmooth:
-    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy);
-    break;
-    case simControlStruct::interactionEnum::cellSmooth:
-    //cout << "cellDimGrid: " << cellDimGrid.x << " " << cellDimGrid.y << " " << cellDimGrid.z << endl;
-    //cout << "cellDimBlock: " << cellDimBlock.x << " " << cellDimBlock.y << " " << cellDimBlock.z << endl;
-    kernelCalcCellListSmoothInteraction<<<cellDimGrid, cellDimBlock>>>(rad, pos, force, pEnergy);
-    break;
-    case simControlStruct::interactionEnum::all:
-    kernelCalcAllToAllVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy);
-    break;
-  }
-  //cudaError err = cudaGetLastError();
-  //if(err != cudaSuccess) cout << "DPM2D::calcForceEnergyGPU::cudaGetLastError(): " << cudaGetErrorName(err) << endl;
-}
-
 void DPM2D::calcForceEnergyCPU() {
   calcShapeForceEnergy();
   switch (simControl.interactionType) {
     case simControlStruct::interactionEnum::vertexVertex:
-    //cout << "vertexVertex" << endl;
     calcVertexVertexInteraction();
     break;
     case simControlStruct::interactionEnum::vertexSmooth:
-    //cout << "vertexSmooth" << endl;
     thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
     calcSmoothInteraction();
     break;
     case simControlStruct::interactionEnum::cellSmooth:
-    //cout << "cellSmooth" << endl;
     calcCellListSmoothInteraction();
     break;
   }
@@ -1734,11 +1748,9 @@ void DPM2D::calcForceEnergyOMP() {
   calcShapeForceEnergy();
   switch (simControl.interactionType) {
     case simControlStruct::interactionEnum::vertexVertex:
-    //cout << "vertexVertex" << endl;
     calcVertexVertexInteractionOMP();
     break;
     case simControlStruct::interactionEnum::vertexSmooth:
-    //cout << "vertexSmooth" << endl;
     thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
     calcSmoothInteractionOMP();
     break;
@@ -1746,24 +1758,6 @@ void DPM2D::calcForceEnergyOMP() {
     calcVertexVertexInteractionOMP();
     break;
   }
-}
-
-void DPM2D::calcShapeForceEnergy() {
-  calcParticlesShape();
-  calcParticlesPositions();
-  // shape variables
-	const double *a0 = thrust::raw_pointer_cast(&d_a0[0]);
-	const double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
-  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-	const double *theta0 = thrust::raw_pointer_cast(&d_theta0[0]);
-  // dynamical variables
-  const double *area = thrust::raw_pointer_cast(&d_area[0]);
-  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
-  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-	double *force = thrust::raw_pointer_cast(&d_force[0]);
-	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
-  // compute shape force
-  kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, pos, force, energy);
 }
 
 double DPM2D::pbcDistance(double x1, double x2, double size) {
@@ -1834,22 +1828,26 @@ void DPM2D::calcVertexVertexInteraction() {
 }
 
 void DPM2D::calcVertexVertexInteractionOMP() {
-  #pragma omp parallel for default(none) shared(d_pos, d_rad, d_particleIdList, d_neighborList, d_maxNeighborList, d_boxSize, d_force, d_energy, d_particleEnergy, simControl, ec, WCAcut, numVertices, neighborListSize, nDim)
+  h_pos = d_pos;
+  h_force = d_force;
+  h_energy = d_energy;
+  //#pragma omp parallel for default(none) shared(h_boxSize, h_pos, h_force, h_energy, h_particleIdList, h_neighborList, h_maxNeighborList, simControl, ec, WCAcut, numVertices, neighborListSize, nDim)
+  #pragma omp parallel for shared(h_force, h_energy)
   for (long vertexId = 0; vertexId < numVertices; vertexId++) {
     std::vector<double> thisPos(MAXDIM), otherPos(MAXDIM), delta(MAXDIM);
     double overlap, ratio, ratio6, ratio12, gradMultiple, epot;
     for (long dim = 0; dim < nDim; dim++) {
-      thisPos[dim] = d_pos[vertexId * nDim + dim];
+      thisPos[dim] = h_pos[vertexId * nDim + dim];
     }
-    double thisRad = d_rad[vertexId];
-    long particleId = d_particleIdList[vertexId];
-    for (long nListId = 0; nListId < d_maxNeighborList[vertexId]; nListId++) {
-      long otherId = d_neighborList[vertexId * neighborListSize + nListId];
+    double thisRad = h_rad[vertexId];
+    long particleId = h_particleIdList[vertexId];
+    for (long nListId = 0; nListId < h_maxNeighborList[vertexId]; nListId++) {
+      long otherId = h_neighborList[vertexId * neighborListSize + nListId];
       if ((vertexId != otherId) && (otherId != -1)) {
         for (long dim = 0; dim < nDim; dim++) {
-          otherPos[dim] = d_pos[otherId * nDim + dim];
+          otherPos[dim] = h_pos[otherId * nDim + dim];
         }
-        double otherRad = d_rad[otherId];
+        double otherRad = h_rad[otherId];
         double radSum = thisRad + otherRad;
         double distanceSq = 0;
         for (long dim = 0; dim < nDim; dim++) {
@@ -1882,15 +1880,17 @@ void DPM2D::calcVertexVertexInteractionOMP() {
           #pragma omp critical
           {
             for (long dim = 0; dim < nDim; dim++) {
-              d_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
-              d_force[otherId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
+              h_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
+              h_force[otherId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
             }
-            d_energy[vertexId] += epot;
+            h_energy[vertexId] += epot;
           }
         }
       }
     }
   }
+  d_force = h_force;
+  d_energy = h_energy;
 }
 
 // get index of previous vertex of the same particle
@@ -2596,6 +2596,9 @@ void DPM2D::calcNeighborList(double cutDistance) {
 		syncNeighborsToDevice();
 		kernelCalcNeighborList<<<dimGrid, dimBlock>>>(pos, rad, cutDistance);
 	}
+  h_neighborList.resize(d_neighborList.size());
+  h_neighborList = d_neighborList;
+  h_maxNeighborList = d_maxNeighborList;
 }
 
 void DPM2D::syncNeighborsToDevice() {

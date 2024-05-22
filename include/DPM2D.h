@@ -66,8 +66,10 @@ public:
   thrust::device_vector<long> d_firstVertexInParticleId;
   // store the index of which particle each vertex belongs to
   thrust::device_vector<long> d_particleIdList;
+  thrust::host_vector<long> h_particleIdList; //HOST
 
   thrust::device_vector<double> d_boxSize;
+  thrust::host_vector<double> h_boxSize; //HOST
 
   // time step
   double dt;
@@ -92,6 +94,7 @@ public:
 
   // vertex shape variables
   thrust::device_vector<double> d_rad;
+  thrust::host_vector<double> h_rad; //HOST
   thrust::device_vector<double> d_l0;
   thrust::device_vector<double> d_length;
   thrust::device_vector<double> d_perimeter;
@@ -102,9 +105,12 @@ public:
 
   // dynamical variables
   thrust::device_vector<double> d_pos;
+  thrust::host_vector<double> h_pos; //HOST
   thrust::device_vector<double> d_vel;
   thrust::device_vector<double> d_force;
+  thrust::host_vector<double> h_force; //HOST
   thrust::device_vector<double> d_energy;
+  thrust::host_vector<double> h_energy; //HOST
   thrust::device_vector<double> d_lastPos;
   thrust::device_vector<double> d_disp;
   thrust::device_vector<double> d_initialPos;
@@ -143,6 +149,8 @@ public:
   // neighbor list
   thrust::device_vector<long> d_neighborList;
   thrust::device_vector<long> d_maxNeighborList;
+  thrust::host_vector<long> h_neighborList; //HOST
+  thrust::host_vector<long> h_maxNeighborList; //HOST
   long maxNeighbors;
 	long neighborListSize;
   // cell list
