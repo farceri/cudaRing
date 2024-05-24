@@ -762,7 +762,7 @@ inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const 
 		ratio12 = ratio6 * ratio6;
 		if (distance <= (WCAcut * radSum)) {
 			epot = 0.5 * d_ec * (4 * (ratio12 - ratio6) + 1);
-			return 24 * d_ec * (2 * ratio12 - ratio6) / distance;
+			return 4 * d_ec * (12 * ratio12 - 6 * ratio6) / distance;
 		} else {
 			return 0;
 		}
@@ -775,7 +775,7 @@ inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const 
 
 // clockwise projection
 inline __device__ double getProjection(const double* thisPos, const double* otherPos, const double* previousPos, const double length) {
-	return (pbcDistance(previousPos[0], otherPos[0], 0) * pbcDistance(previousPos[0], thisPos[0], 0) + pbcDistance(previousPos[1], otherPos[1], 1) * pbcDistance(previousPos[1], thisPos[1], 1)) / (length * length);
+	return (pbcDistance(thisPos[0], previousPos[0], 0) * pbcDistance(otherPos[0], previousPos[0], 0) + pbcDistance(thisPos[1], previousPos[1], 1) * pbcDistance(otherPos[1], previousPos[1], 1)) / (length * length);
 }
 
 inline __device__ void getProjectionPos(const double* previousPos, const double* segment, double* projPos, const double proj) {
@@ -842,7 +842,7 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 		auto otherRad = 0.0;
 		auto interaction = 0.0;
 		double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
-		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM], interSegment[MAXDIM];//, relSegment[MAXDIM];// relPos[MAXDIM]
+		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM], interSegment[MAXDIM], relSegment[MAXDIM];// relPos[MAXDIM]
 		getVertexPos(vertexId, pos, thisPos);
 		auto thisRad = rad[vertexId];
 		auto particleId = d_particleIdListPtr[vertexId];
@@ -856,10 +856,10 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 				auto previousId = getPreviousId(otherId, otherParticleId);
 				getVertexPos(previousId, pos, previousPos);
 				getDelta(otherPos, previousPos, segment);
-				//getDelta(thisPos, previousPos, relSegment);
-				//for (long dim = 0; dim < d_nDim; dim++) {
-				//	thisPos[dim] = previousPos[dim] + relSegment[dim];
-				//}
+				getDelta(thisPos, previousPos, relSegment);
+				for (long dim = 0; dim < d_nDim; dim++) {
+					thisPos[dim] = previousPos[dim] + relSegment[dim];
+				}
 				auto length = calcNorm(segment);
 				auto projection = getProjection(thisPos, otherPos, previousPos, length);
 				// check if the interaction is vertex-segment
