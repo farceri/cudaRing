@@ -23,7 +23,7 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool read = false, readState = false, cpu = false, omp = true, wca = true, smooth = true, concavity = false;
+  bool read = false, readState = false, cpu = false, omp = false, wca = true, smooth = true, concavity = false;
   long numParticles = atol(argv[4]), nDim = 2, numVertexPerParticle = 32, numVertices;
   long step, iteration = 0, maxIterations = 5e06, maxSearchStep = 1500, searchStep = 0, updateCount;
   long maxStep = atof(argv[6]), printFreq = int(maxStep / 10), saveFreq = int(printFreq / 10), minStep = 20, numStep = 0;

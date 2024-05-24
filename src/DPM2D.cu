@@ -531,6 +531,10 @@ thrust::host_vector<double> DPM2D::getBoxSize() {
 //**************************** shape variables *******************************//
 void DPM2D::setVertexRadii(thrust::host_vector<double> &rad_) {
   d_rad = rad_;
+  if(getSimulationType() == simControlStruct::simulationEnum::omp) {
+    cout << "DPM2D::setVertexRadii:: initialized radii on host" << endl;
+    h_rad = d_rad;
+  }
 }
 
 thrust::host_vector<double> DPM2D::getVertexRadii() {
@@ -739,6 +743,10 @@ thrust::host_vector<double> DPM2D::getParticleTorques() {
 //************************** dynamical variables *****************************//
 void DPM2D::setVertexPositions(thrust::host_vector<double> &pos_) {
   d_pos = pos_;
+  if(getSimulationType() == simControlStruct::simulationEnum::omp) {
+    cout << "DPM2D::setVertexPositions:: initialized positions on host" << endl;
+    h_pos = d_pos;
+  }
 }
 
 thrust::host_vector<double> DPM2D::getVertexPositions() {
@@ -1879,7 +1887,7 @@ void DPM2D::calcVertexVertexInteractionOMP() {
           }
           if(addForce == true) {
             //cout << "checking vertexId: " << vertexId << " and otherId: " << otherId << endl;
-            #pragma omp atomic
+            #pragma omp atomic seq_cst
             {
               for (long dim = 0; dim < nDim; dim++) {
                 h_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
@@ -2088,7 +2096,7 @@ void DPM2D::calcSmoothInteractionOMP() {
   {
     for (long vertexId = 0; vertexId < numVertices; vertexId++) {
       std::vector<double> thisPos(MAXDIM), otherPos(MAXDIM), previousPos(MAXDIM), secondPreviousPos(MAXDIM);
-      std::vector<double> delta(MAXDIM), segment(MAXDIM), projPos(MAXDIM), relSegment(MAXDIM);
+      std::vector<double> delta(MAXDIM), segment(MAXDIM), projPos(MAXDIM);//, relSegment(MAXDIM);
       double distance, gradMultiple, overlap, ratio, ratio6, ratio12, epot = 0.0;
       long particleId = d_particleIdList[vertexId];
       for (long dim = 0; dim < nDim; dim++) {
@@ -2114,10 +2122,10 @@ void DPM2D::calcSmoothInteractionOMP() {
           }
           double length = sqrt(distanceSq);
           // this takes into account periodic boundaries with respect to the segment
-          for (long dim = 0; dim < nDim; dim++) {
-            relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
-            thisPos[dim] = previousPos[dim] + relSegment[dim];
-          }
+          //for (long dim = 0; dim < nDim; dim++) {
+          //  relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
+          //  thisPos[dim] = previousPos[dim] + relSegment[dim];
+          //}
           // compute projection on the line between other and previous
           double projection = (pbcDistance(thisPos[0], previousPos[0], h_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], h_boxSize[1])) / (length * length);
           //projection = getProjection(thisPos, otherPos, previousPos, length);
@@ -2159,7 +2167,7 @@ void DPM2D::calcSmoothInteractionOMP() {
               //cross = calcCross(thisPos, otherPos, previousPos);
               double absCross = fabs(cross);
               double sign = absCross / cross;
-              #pragma omp atomic
+              #pragma omp atomic seq_cst
               {
                 // this vertex
                 h_force[vertexId * nDim] += gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / length;
@@ -2170,53 +2178,64 @@ void DPM2D::calcSmoothInteractionOMP() {
                 // previous vertex
                 h_force[previousId * nDim] += gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - absCross * pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) / (length * length)) / length;
                 h_force[previousId * nDim + 1] += gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], h_boxSize[0]) - absCross * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / (length * length)) / length; 
-                //}
+                // add energy
+                h_particleEnergy[particleId] += epot;
+                h_particleEnergy[otherParticleId] += epot;
               }
             }
           } else if(projection <= 0) {
+            // check that previous vertex is not already interacting with this vertex through a segment
+            long secondPreviousId = getPreviousId(previousId, otherParticleId);
             distanceSq = 0;
             for (long dim = 0; dim < nDim; dim++) {
-              delta[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
+              secondPreviousPos[dim] = d_pos[secondPreviousId * nDim + dim];
+              delta[dim] = pbcDistance(secondPreviousPos[dim], previousPos[dim], h_boxSize[dim]);
               distanceSq += delta[dim] * delta[dim];
             }
-            distance = sqrt(distanceSq);
-            bool addForce = false;
-            switch (simControl.potentialType) {
-              case simControlStruct::potentialEnum::harmonic:
-              overlap = 1 - distance / radSum;
-              if(overlap > 0) {
-                addForce = true;
-                gradMultiple = ec * overlap / radSum;
-                epot = (0.5 * ec * overlap * overlap);
+            length = sqrt(distanceSq);
+            double previousProj = (pbcDistance(thisPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (length * length);
+            //previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
+            if(previousProj > 1) {
+              distanceSq = 0;
+              for (long dim = 0; dim < nDim; dim++) {
+                delta[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
+                distanceSq += delta[dim] * delta[dim];
               }
-              break;
-              case simControlStruct::potentialEnum::wca:
-              if(distance <= (WCAcut * radSum)) {
-                addForce = true;
-                ratio = radSum / distance;
-                ratio6 = pow(ratio, 6);
-                ratio12 = ratio6 * ratio6;
-                gradMultiple = 4 * ec * (12 * ratio12 - 6 * ratio6) / distance;
-                epot = 0.5 * ec * (4 * (ratio12 - ratio6) + 1);
+              distance = sqrt(distanceSq);
+              bool addForce = false;
+              switch (simControl.potentialType) {
+                case simControlStruct::potentialEnum::harmonic:
+                overlap = 1 - distance / radSum;
+                if(overlap > 0) {
+                  addForce = true;
+                  gradMultiple = ec * overlap / radSum;
+                  epot = (0.5 * ec * overlap * overlap);
+                }
+                break;
+                case simControlStruct::potentialEnum::wca:
+                if(distance <= (WCAcut * radSum)) {
+                  addForce = true;
+                  ratio = radSum / distance;
+                  ratio6 = pow(ratio, 6);
+                  ratio12 = ratio6 * ratio6;
+                  gradMultiple = 4 * ec * (12 * ratio12 - 6 * ratio6) / distance;
+                  epot = 0.5 * ec * (4 * (ratio12 - ratio6) + 1);
+                }
+                break;
               }
-              break;
-            }
-            if(addForce == true) {
-              //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
-              #pragma omp atomic
-              {
-                for (long dim = 0; dim < nDim; dim++) {
-                  h_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
-                  h_force[previousId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
+              if(addForce == true) {
+                //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
+                #pragma omp atomic seq_cst
+                {
+                  for (long dim = 0; dim < nDim; dim++) {
+                    h_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
+                    h_force[previousId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
+                  }
+                  h_particleEnergy[particleId] += epot;
+                  h_particleEnergy[otherParticleId] += epot;
                 }
               }
             }
-          }
-          if(epot != 0.0) {
-            #pragma omp atomic
-            h_particleEnergy[particleId] += epot;
-            #pragma omp atomic
-            h_particleEnergy[otherParticleId] += epot;
           }
         }
       }

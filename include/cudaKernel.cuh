@@ -842,7 +842,7 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 		auto otherRad = 0.0;
 		auto interaction = 0.0;
 		double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
-		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM], interSegment[MAXDIM], relSegment[MAXDIM];// relPos[MAXDIM]
+		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM], interSegment[MAXDIM];//, relSegment[MAXDIM];// relPos[MAXDIM]
 		getVertexPos(vertexId, pos, thisPos);
 		auto thisRad = rad[vertexId];
 		auto particleId = d_particleIdListPtr[vertexId];
@@ -856,10 +856,10 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 				auto previousId = getPreviousId(otherId, otherParticleId);
 				getVertexPos(previousId, pos, previousPos);
 				getDelta(otherPos, previousPos, segment);
-				getDelta(thisPos, previousPos, relSegment);
-				for (long dim = 0; dim < d_nDim; dim++) {
-					thisPos[dim] = previousPos[dim] + relSegment[dim];
-				}
+				//getDelta(thisPos, previousPos, relSegment);
+				//for (long dim = 0; dim < d_nDim; dim++) {
+				//	thisPos[dim] = previousPos[dim] + relSegment[dim];
+				//}
 				auto length = calcNorm(segment);
 				auto projection = getProjection(thisPos, otherPos, previousPos, length);
 				// check if the interaction is vertex-segment
@@ -873,14 +873,14 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 					getVertexPos(secondPreviousId, pos, secondPreviousPos);
 					getDelta(previousPos, secondPreviousPos, previousSegment);
 					length = calcNorm(previousSegment);
-					//auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
+					auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
 					switch (d_simControl.concavityType) {
 						case simControlStruct::concavityEnum::off:
-						//if(previousProj > 1) {
-						interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-						atomicAdd(&pEnergy[particleId], interaction);
-						atomicAdd(&pEnergy[otherParticleId], interaction);
-						//}
+						if(previousProj > 1) {
+							interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+							atomicAdd(&pEnergy[particleId], interaction);
+							atomicAdd(&pEnergy[otherParticleId], interaction);
+						}
 						break;
 						case simControlStruct::concavityEnum::on:
 						// check if the vertex-vertex interaction is concave or convex
@@ -906,7 +906,7 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 								interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
 								atomicAdd(&pEnergy[particleId], interaction);
 								atomicAdd(&pEnergy[otherParticleId], interaction);
-							} else {//if(previousProj > 1) {
+							} else if(previousProj > 1) {
 								interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
 								atomicAdd(&pEnergy[particleId], interaction);
 								atomicAdd(&pEnergy[otherParticleId], interaction);
@@ -917,7 +917,6 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 				}
 			}
 		}
-	//__syncthreads();
 	//block.sync();
   	}
 }

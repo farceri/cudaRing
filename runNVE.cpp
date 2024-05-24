@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = false, logSave = false, linSave = false, saveFinal = true;
+  bool readState = true, logSave = false, linSave = false, saveFinal = true;
   long numParticles = atof(argv[6]), nDim = 2, numVertexPerParticle = 32, numVertices;
   long step = 0, maxStep = atof(argv[4]), initialStep = atof(argv[5]), multiple = 1, saveFreq = 1;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), updateCount = 0;
@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
   dirSample = whichDynamics + "T" + argv[3] + "/";
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
-  dpm.setSimulationType(simControlStruct::simulationEnum::omp);
+  dpm.setSimulationType(simControlStruct::simulationEnum::gpu);
   dpm.setPotentialType(simControlStruct::potentialEnum::wca);
   dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
   dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     inDir = inDir + dirSample;
     outDir = inDir;
     if(runDynamics == true) {
-      outDir = outDir + "dynamics-omp2/";
+      outDir = outDir + "dynamics-gpu/";
       if(std::experimental::filesystem::exists(outDir) == true) {
         inDir = outDir;
       } else {
