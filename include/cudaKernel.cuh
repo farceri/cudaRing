@@ -432,11 +432,11 @@ __global__ void kernelCalcShapeForceEnergy(const double* a0, const double* area,
 	  	//getRelativeVertexPos(secondPreviousId, pos, secondPreviousPos, partPos);
 		//getSegment(secondNextPos, nextPos, secondNextSegment);
 		//getSegment(previousPos, secondPreviousPos, secondPreviousSegment);
-	  	//auto previousAngleDelta = calcAngle(previousSegment, secondPreviousSegment) - theta0[previousId];
-	  	//auto thisAngleDelta = calcAngle(nextSegment, previousSegment) - theta0[vertexId];
-	 	//auto nextAngleDelta = calcAngle(secondNextSegment, nextSegment) - theta0[nextId];
+		//theta[previousId] = calcAngle(previousSegment, secondPreviousSegment);
 	  	auto previousAngleDelta = theta[previousId] - theta0[previousId];
+		//theta[vertexId] = calcAngle(nextSegment, previousSegment);
 	  	auto thisAngleDelta = theta[vertexId] - theta0[vertexId];
+		//theta[nextId] = calcAngle(secondNextSegment, nextSegment);
 	 	auto nextAngleDelta = theta[nextId] - theta0[nextId];
 		shapeEnergy += calcBendingForceEnergy(previousSegment, nextSegment, thisAngleDelta, nextAngleDelta, previousAngleDelta, &force[vertexId*d_nDim]);
     	energy[vertexId] = shapeEnergy;
@@ -799,15 +799,15 @@ inline __device__ double calcVertexSegmentInteraction(const double* thisPos, con
 	if (gradMultiple != 0) {
 		auto sign = cross / absCross;
 		// this vertex
-	  atomicAdd(&thisForce[0], gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], 1) / length);
-	  atomicAdd(&thisForce[1], gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], 0) / length);
+	  	atomicAdd(&thisForce[0], gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], 1) / length);
+	  	atomicAdd(&thisForce[1], gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], 0) / length);
 		// other vertex
-	  atomicAdd(&otherForce[0], gradMultiple * (sign * pbcDistance(thisPos[1], previousPos[1], 1) + absCross * pbcDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length);
-	  atomicAdd(&otherForce[1], gradMultiple * (sign * pbcDistance(previousPos[0], thisPos[0], 0) + absCross * pbcDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length);
+	  	atomicAdd(&otherForce[0], gradMultiple * (sign * pbcDistance(thisPos[1], previousPos[1], 1) + absCross * pbcDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length);
+	  	atomicAdd(&otherForce[1], gradMultiple * (sign * pbcDistance(previousPos[0], thisPos[0], 0) + absCross * pbcDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length);
 		// previous vertex
-	  atomicAdd(&previousForce[0], gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], 1) - absCross * pbcDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length);
-	  atomicAdd(&previousForce[1], gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], 0) - absCross * pbcDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length);
-	  return epot;
+	  	atomicAdd(&previousForce[0], gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], 1) - absCross * pbcDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length);
+	  	atomicAdd(&previousForce[1], gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], 0) - absCross * pbcDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length);
+	  	return epot;
 	}
 	return 0.;
 }
@@ -1507,17 +1507,21 @@ __global__ void kernelCalcParticleShape(const double* pos, double* length, doubl
 		auto tempArea = 0.0;
 		perimeter[particleId] = 0.0;
 		auto nextId = -1;
+		auto previousId = -1;
 		auto firstId = d_firstVertexInParticleIdPtr[particleId];
 		double delta[MAXDIM], nextPos[MAXDIM], currentPos[MAXDIM], nextSegment[MAXDIM], previousPos[MAXDIM], previousSegment[MAXDIM];
 		getVertexPos(firstId, pos, currentPos);
 		// compute particle area via shoe-string method
 		for (long currentId = firstId; currentId < firstId + d_numVertexInParticleListPtr[particleId]; currentId++) {
 			nextId = getNextId(currentId, particleId);
+			previousId = getPreviousId(currentId, particleId); // added
 			segmentLength = 0.0;
 			for (long dim = 0; dim < d_nDim; dim++) {
 				delta[dim] = pbcDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
 				nextPos[dim] = currentPos[dim] + delta[dim];
 				segmentLength += delta[dim] * delta[dim];
+				delta[dim] = pbcDistance(pos[previousId * d_nDim + dim], currentPos[dim], dim); // added
+				previousPos[dim] = currentPos[dim] + delta[dim]; // added + because previous is already before current (on a line delta is already negative)
 			}
 			getSegment(nextPos, currentPos, nextSegment);
             getSegment(currentPos, previousPos, previousSegment);
@@ -1870,7 +1874,7 @@ __global__ void kernelCalcHexaticOrderParameter(const double* pPos, double* psi6
 	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
 	if(particleId < d_numParticles) {
 		double thisPos[MAXDIM], otherPos[MAXDIM], delta[MAXDIM];
-		auto theta = 0.0;
+		auto angle = 0.0;
 		// get particle position
 		for (long dim = 0; dim < d_nDim; dim++) {
 			thisPos[dim] = pPos[particleId * d_nDim + dim];
@@ -1879,8 +1883,8 @@ __global__ void kernelCalcHexaticOrderParameter(const double* pPos, double* psi6
     	for (long nListId = 0; nListId < d_partMaxNeighborListPtr[particleId]; nListId++) {
       		if (extractParticleNeighborPos(particleId, nListId, pPos, otherPos)) {
 				getDelta(thisPos, otherPos, delta);
-				theta = atan2(delta[1], delta[0]);
-				psi6[particleId] += sin(6 * theta) / (6 * theta);
+				angle = atan2(delta[1], delta[0]);
+				psi6[particleId] += sin(6 * angle) / (6 * angle);
 			}
 		}
 		psi6[particleId] /= d_partMaxNeighborListPtr[particleId];

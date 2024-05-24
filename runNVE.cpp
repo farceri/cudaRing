@@ -27,12 +27,13 @@ int main(int argc, char **argv) {
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = false, logSave = false, linSave = true, saveFinal = false;
+  bool readState = false, logSave = false, linSave = false, saveFinal = false;
   long numParticles = atof(argv[6]), nDim = 2, numVertexPerParticle = 32, numVertices;
   long step = 0, maxStep = atof(argv[4]), initialStep = atof(argv[5]), multiple = 1, saveFreq = 1;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), updateCount = 0;
   double cutDistance, cutoff = 0.5, timeStep = atof(argv[2]), timeUnit = 0, sigma, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, Tinject = atof(argv[3]), size;
+  double ea = 1e04, el = 100, eb = 1e-03, ec = 1, Tinject = atof(argv[3]), size;
+  //double ea = 1e05, el = 20, eb = 10, ec = 1;
   std::string outDir, energyFile, currentDir, inDir = argv[1], dirSample, whichDynamics = "nve/";
   dirSample = whichDynamics + "T" + argv[3] + "/";
   // initialize dpm object
@@ -49,7 +50,7 @@ int main(int argc, char **argv) {
     inDir = inDir + dirSample;
     outDir = inDir;
     if(runDynamics == true) {
-      outDir = outDir + "dynamics-smooth/";
+      outDir = outDir + "dynamics-gpu/";
       if(std::experimental::filesystem::exists(outDir) == true) {
         inDir = outDir;
       } else {
@@ -77,7 +78,7 @@ int main(int argc, char **argv) {
   // output file
   energyFile = outDir + "energy.dat";
   ioDPM.openEnergyFile(energyFile);
-  sigma = 2 * dpm.getMeanParticleSize();
+  sigma = dpm.getMeanParticleSize();
   timeUnit = sigma / sqrt(ec);//epsilon and mass are 1 sqrt(m sigma^2 / epsilon)
   timeStep = dpm.setTimeStep(timeStep * timeUnit);
   cout << "Time step: " << timeStep << " sigma: " << sigma << " Tinject: " << Tinject << endl;
@@ -155,7 +156,7 @@ int main(int argc, char **argv) {
   cudaEventRecord(stop, 0);
   cudaEventSynchronize(stop);
   cudaEventElapsedTime(&elapsed_time_ms, start, stop);
-  printf("Time to calculate results on GPU: %f ms.\n", elapsed_time_ms); // exec. time
+  printf("Time to calculate results on GPU: %f ms, %f s.\n", elapsed_time_ms, elapsed_time_ms / 1000); // exec. time
   // save final configuration
   if(saveFinal == true) {
     ioDPM.savePacking(outDir);

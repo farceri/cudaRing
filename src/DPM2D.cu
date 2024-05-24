@@ -1889,7 +1889,7 @@ void DPM2D::calcVertexVertexInteractionOMP() {
           break;
         }
         if (addForce == true) {
-          #pragma omp critical
+          #pragma omp atomic
           {
             for (long dim = 0; dim < nDim; dim++) {
               h_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;

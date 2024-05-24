@@ -365,6 +365,7 @@ public:
     save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
     save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
     save1DFile(dirName + "restAreas.dat", dpm_->getRestAreas());
+    save1DFile(dirName + "segmentLengths.dat", dpm_->getSegmentLengths());
     save1DFile(dirName + "restLengths.dat", dpm_->getRestLengths());
     save1DFile(dirName + "segmentAngles.dat", dpm_->getSegmentAngles());
     save1DFile(dirName + "restAngles.dat", dpm_->getRestAngles());
