@@ -32,8 +32,7 @@ int main(int argc, char **argv) {
   long step = 0, maxStep = atof(argv[4]), initialStep = atof(argv[5]), multiple = 1, saveFreq = 1;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), updateCount = 0;
   double cutDistance, cutoff = 0.5, timeStep = atof(argv[2]), timeUnit = 0, sigma, waveQ;
-  double ea = 1e04, el = 100, eb = 1e-03, ec = 1, Tinject = atof(argv[3]), size;
-  //double ea = 1e05, el = 20, eb = 10, ec = 1;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, Tinject = atof(argv[3]), size;
   std::string outDir, energyFile, currentDir, inDir = argv[1], dirSample, whichDynamics = "nve/";
   dirSample = whichDynamics + "T" + argv[3] + "/";
   // initialize dpm object
