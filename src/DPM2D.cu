@@ -2092,11 +2092,11 @@ void DPM2D::calcSmoothInteractionOMP() {
   h_energy = d_energy;
   h_particleEnergy = d_particleEnergy;
   //#pragma omp parallel for default(none) shared(d_pos, d_rad, d_particleIdList, d_neighborList, d_maxNeighborList, d_boxSize, d_force, d_energy, d_particleEnergy, simControl, ec, WCAcut, numVertices, neighborListSize, nDim)
-  #pragma omp parallel for shared(h_force, h_energy, h_particleEnergy)
+  #pragma omp parallel for reduction(+,h_force) reduction(+,h_energy) reduction(+,h_particleEnergy)
   {
     for (long vertexId = 0; vertexId < numVertices; vertexId++) {
       std::vector<double> thisPos(MAXDIM), otherPos(MAXDIM), previousPos(MAXDIM), secondPreviousPos(MAXDIM);
-      std::vector<double> delta(MAXDIM), segment(MAXDIM), projPos(MAXDIM);//, relSegment(MAXDIM);
+      std::vector<double> delta(MAXDIM), segment(MAXDIM), projPos(MAXDIM), relSegment(MAXDIM), relPos(MAXDIM);
       double distance, gradMultiple, overlap, ratio, ratio6, ratio12, epot = 0.0;
       long particleId = d_particleIdList[vertexId];
       for (long dim = 0; dim < nDim; dim++) {
@@ -2122,10 +2122,10 @@ void DPM2D::calcSmoothInteractionOMP() {
           }
           double length = sqrt(distanceSq);
           // this takes into account periodic boundaries with respect to the segment
-          //for (long dim = 0; dim < nDim; dim++) {
-          //  relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
-          //  thisPos[dim] = previousPos[dim] + relSegment[dim];
-          //}
+          for (long dim = 0; dim < nDim; dim++) {
+            relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
+            thisPos[dim] = previousPos[dim] + relSegment[dim];
+          }
           // compute projection on the line between other and previous
           double projection = (pbcDistance(thisPos[0], previousPos[0], h_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], h_boxSize[1])) / (length * length);
           //projection = getProjection(thisPos, otherPos, previousPos, length);
@@ -2185,17 +2185,17 @@ void DPM2D::calcSmoothInteractionOMP() {
             }
           } else if(projection <= 0) {
             // check that previous vertex is not already interacting with this vertex through a segment
-            long secondPreviousId = getPreviousId(previousId, otherParticleId);
-            distanceSq = 0;
-            for (long dim = 0; dim < nDim; dim++) {
-              secondPreviousPos[dim] = d_pos[secondPreviousId * nDim + dim];
-              delta[dim] = pbcDistance(secondPreviousPos[dim], previousPos[dim], h_boxSize[dim]);
-              distanceSq += delta[dim] * delta[dim];
-            }
-            length = sqrt(distanceSq);
-            double previousProj = (pbcDistance(thisPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (length * length);
+            //long secondPreviousId = getPreviousId(previousId, otherParticleId);
+            //distanceSq = 0;
+            //for (long dim = 0; dim < nDim; dim++) {
+            //  secondPreviousPos[dim] = d_pos[secondPreviousId * nDim + dim];
+            //  delta[dim] = pbcDistance(secondPreviousPos[dim], previousPos[dim], h_boxSize[dim]);
+            //  distanceSq += delta[dim] * delta[dim];
+            //}
+            //length = sqrt(distanceSq);
+            //double previousProj = (pbcDistance(thisPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (length * length);
             //previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
-            if(previousProj > 1) {
+            //if(previousProj > 1) {
               distanceSq = 0;
               for (long dim = 0; dim < nDim; dim++) {
                 delta[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
@@ -2235,7 +2235,7 @@ void DPM2D::calcSmoothInteractionOMP() {
                   h_particleEnergy[otherParticleId] += epot;
                 }
               }
-            }
+            //}
           }
         }
       }
