@@ -2000,10 +2000,13 @@ void DPM2D::calcVertexVertexInteraction() {
           if(addForce == true) {
             //cout << "checking vertexId: " << vertexId << " and otherId: " << otherId << endl;
             for (long dim = 0; dim < nDim; dim++) {
-                h_force[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
-                h_interaction[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
+                h_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
+                h_force[otherId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
+                h_interaction[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
+                h_interaction[otherId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
               }
-            h_energy[vertexId] += epot;
+            h_energy[vertexId] += epot * 0.5;
+            h_energy[otherId] += epot * 0.5;
           }
         }
       }
@@ -2217,7 +2220,7 @@ void DPM2D::calcSmoothInteraction() {
   thrust::fill(h_interaction.begin(), h_interaction.end(), double(0));
   for (long vertexId = 0; vertexId < numVertices; vertexId++) {
     double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
-    double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM], relSegment[MAXDIM], relPos[MAXDIM];
+    double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM];// relSegment[MAXDIM], relPos[MAXDIM];
     double distance, gradMultiple, overlap, ratio, ratio6, ratio12, epot;
     long particleId = d_particleIdList[vertexId];
     for (long dim = 0; dim < nDim; dim++) {
@@ -2246,13 +2249,13 @@ void DPM2D::calcSmoothInteraction() {
         }
         double length = sqrt(distanceSq);
         // this takes into account periodic boundaries with respect to the segment
-        for (long dim = 0; dim < nDim; dim++) {
-          relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
-          relPos[dim] = previousPos[dim] + relSegment[dim];
-        }
+        //for (long dim = 0; dim < nDim; dim++) {
+        //  relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
+        //  thisPos[dim] = previousPos[dim] + relSegment[dim];
+        //}
         // compute projection on the line between other and previous
-        //double projection = (pbcDistance(relPos[0], previousPos[0], h_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) + pbcDistance(relPos[1], previousPos[1], h_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], h_boxSize[1])) / (length * length);
-        double projection = getProjection(relPos, otherPos, previousPos, length);
+        double projection = (pbcDistance(thisPos[0], previousPos[0], h_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], h_boxSize[1])) / (length * length);
+        //double projection = getProjection(thisPos, otherPos, previousPos, length);
         //cout << "projection: " << projection << " length: " << length << endl;
         if(projection >= 0 && projection < 1) {
           double reducedProj = max(0.0, min(1.0, projection));
@@ -2287,11 +2290,10 @@ void DPM2D::calcSmoothInteraction() {
             break;
           }
           if(addForce == true) {
-            //if(vertexId == 36) cout << "36 vertex-segment interacton with " << otherId << " " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
             //if(vertexId == 37) cout << "37 vertex-segment interacton with " << otherId << " " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
             //if(vertexId == 7) cout << "7 vertex-segment interacton with " << otherId << " " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
-            //double cross = pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], h_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]);
-            double cross = calcCross(thisPos, otherPos, previousPos);
+            double cross = pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], h_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]);
+            //double cross = calcCross(thisPos, otherPos, previousPos);
             double absCross = fabs(cross);
             double sign = absCross / cross;
             // this vertex
@@ -2326,12 +2328,12 @@ void DPM2D::calcSmoothInteraction() {
             distanceSq += delta[dim] * delta[dim];
           }
           length = sqrt(distanceSq);
-          for (long dim = 0; dim < nDim; dim++) {
-            relSegment[dim] = pbcDistance(thisPos[dim], secondPreviousPos[dim], h_boxSize[dim]);
-            relPos[dim] = secondPreviousPos[dim] + relSegment[dim];
-          }
-          //double previousProj = (pbcDistance(relPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(relPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (length * length);
-          double previousProj = getProjection(relPos, previousPos, secondPreviousPos, length);
+          //for (long dim = 0; dim < nDim; dim++) {
+          //  relSegment[dim] = pbcDistance(thisPos[dim], secondPreviousPos[dim], h_boxSize[dim]);
+          //  relPos[dim] = secondPreviousPos[dim] + relSegment[dim];
+          //}
+          double previousProj = (pbcDistance(thisPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (length * length);
+          //double previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
           if(previousProj >= 1) {
             distanceSq = 0;
             for (long dim = 0; dim < nDim; dim++) {
@@ -2361,26 +2363,17 @@ void DPM2D::calcSmoothInteraction() {
               break;
             }
             if(addForce == true) {
-              //bool isSmooth = false;
-              //for (long smoothId = 0; smoothId < h_maxSmoothNeighborList[previousId]; smoothId++) {
-              //  if(h_smoothNeighborList[previousId * smoothNeighborListSize + smoothId] == vertexId) {
-              //    isSmooth = true;
-              //  }
-              //}
-              //if(!isSmooth) {
-                //if(vertexId == 36) cout << "36 vertex-vertex interacton with " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
-                //if(vertexId == 37) cout << "37 vertex-vertex interacton with " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
-                //if(vertexId == 7) cout << "7 vertex-vertex interacton with " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
-                //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
-                for (long dim = 0; dim < nDim; dim++) {
-                  h_force[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
-                  h_force[previousId * nDim + dim] -= gradMultiple * delta[dim] / distance;
-                  h_interaction[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
-                  h_interaction[previousId * nDim + dim] -= gradMultiple * delta[dim] / distance;
-                }
-                h_particleEnergy[particleId] += epot;
-                h_particleEnergy[otherParticleId] += epot;
-              //}
+            //if(vertexId == 37) cout << "37 vertex-vertex interacton with " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
+            //if(vertexId == 7) cout << "7 vertex-vertex interacton with " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
+            //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
+              for (long dim = 0; dim < nDim; dim++) {
+                h_force[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
+                h_force[previousId * nDim + dim] -= gradMultiple * delta[dim] / distance;
+                h_interaction[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
+                h_interaction[previousId * nDim + dim] -= gradMultiple * delta[dim] / distance;
+              }
+              h_particleEnergy[particleId] += epot;
+              h_particleEnergy[otherParticleId] += epot;
             }
           }
         }
