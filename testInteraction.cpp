@@ -26,33 +26,30 @@ int main(int argc, char **argv) {
   long step = 0, numParticles = 2, nDim = 2, numVertexPerParticle = 20, maxStep = atof(argv[3]), updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double LJcutoff = 4, cutoff = 0.5, cutDistance, timeStep = atof(argv[2]), sigma, timeUnit, size;
-  double sigma0 = 1, sigma1 = 3, lx = 10, ly = 10, vel1 = -0.1, y0 = 0.5, y1 = 0.7, epot, ekin;
+  double sigma0 = 1, lx = 2.8, ly = 2.8, vel1 = 2e-01, y0 = 0.28, y1 = 0.65, epot, ekin;
   double ea = 1e05, el = 20, eb = 0, ec = 1;
   std::string outDir, energyFile, inDir = argv[1], currentDir, dirSample;
   // initialize sp object
 	DPM2D dp(numParticles, nDim, numVertexPerParticle);
+  dirSample = "harmonic-smooth-cpu/";
   dp.printDeviceProperties();
   long numVertices = dp.getNumVertices();
-  dp.setSimulationType(simControlStruct::simulationEnum::gpu);
+  dp.setSimulationType(simControlStruct::simulationEnum::cpu);
   if(rigid == true) {
-    dp.setParticleType(simControlStruct::particleEnum::rigid);
+    dp.setParticleType(simControlStruct::particleEnum::deformable);
   }
-  dp.setPotentialType(simControlStruct::potentialEnum::wca);
   dp.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
-  dp.setConcavityType(simControlStruct::concavityEnum::on);
+  dp.setConcavityType(simControlStruct::concavityEnum::off);
   dp.setEnergyCosts(ea, el, eb, ec);
   if(lj == true) {
     dp.setPotentialType(simControlStruct::potentialEnum::lennardJones);
-    dirSample = "lj/";
     cout << "Setting Lennard-Jones potential" << endl;
     dp.setLJcutoff(LJcutoff);
   } else if(wca == true) {
     dp.setPotentialType(simControlStruct::potentialEnum::wca);
-    dirSample = "wca/";
     cout << "Setting WCA potential" << endl;
   } else {
     cout << "Setting Harmonic potential" << endl;
-    dirSample = "smooth/";
   }
   if(alltoall == true) {
     dp.setNeighborType(simControlStruct::neighborEnum::allToAll);
@@ -67,6 +64,7 @@ int main(int argc, char **argv) {
     inDir = inDir + dirSample;
     outDir = inDir;
     ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
+    dp.setInitialPositions();
     if(readState == true) {
       ioDPM.readState(inDir, numParticles, numVertices, nDim);
     }
@@ -90,7 +88,7 @@ int main(int argc, char **argv) {
   cout << "initial velocity on particle 1: " << vel1 << " time step: " << timeStep << endl;
   // initialize simulation
   if(dp.getNeighborType() == simControlStruct::neighborEnum::neighbor || dp.getNeighborType() == simControlStruct::neighborEnum::cell) {
-    size = dp.getVertexRadius();
+    size = 2 * dp.getVertexRadius();
     cutDistance = dp.setDisplacementCutoff(cutoff, size);
     dp.calcNeighbors(cutDistance);
   }

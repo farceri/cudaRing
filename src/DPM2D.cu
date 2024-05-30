@@ -53,7 +53,7 @@ DPM2D::DPM2D(long nParticles, long dim, long nVertexPerParticle) {
   setNumVertices(numVertices);
 	simControl.simulationType = simControlStruct::simulationEnum::gpu;
 	simControl.particleType = simControlStruct::particleEnum::deformable;
-	simControl.potentialType = simControlStruct::potentialEnum::wca;
+	simControl.potentialType = simControlStruct::potentialEnum::harmonic;
 	simControl.interactionType = simControlStruct::interactionEnum::vertexVertex;
 	simControl.neighborType = simControlStruct::neighborEnum::neighbor;
 	simControl.concavityType = simControlStruct::concavityEnum::off;
@@ -134,6 +134,7 @@ void DPM2D::initDynamicalVariables(long numVertices_) {
   d_vel.resize(numVertices_ * nDim);
   d_force.resize(numVertices_ * nDim);
   h_force.resize(numVertices_ * nDim); //HOST
+  h_interaction.resize(numVertices_ * nDim); //HOST
   d_energy.resize(numVertices_);
   h_energy.resize(numVertices_); //HOST
   d_lastPos.resize(numVertices_ * nDim);
@@ -208,6 +209,14 @@ void DPM2D::initNeighbors(long numVertices_) {
   h_maxNeighborList.resize(numVertices_); //HOST
   thrust::fill(d_neighborList.begin(), d_neighborList.end(), -1L);
   thrust::fill(d_maxNeighborList.begin(), d_maxNeighborList.end(), maxNeighbors);
+}
+
+void DPM2D::initSmoothNeighbors(long numVertices_) {
+  smoothNeighborListSize = 0;
+  h_smoothNeighborList.resize(numVertices_); //HOST
+  h_maxSmoothNeighborList.resize(numVertices_); //HOST
+  thrust::fill(h_smoothNeighborList.begin(), h_smoothNeighborList.end(), -1L);
+  thrust::fill(h_maxSmoothNeighborList.begin(), h_maxSmoothNeighborList.end(), 0);
 }
 
 double DPM2D::initCells(long numVertices_, double cellSize_) {
@@ -330,8 +339,11 @@ void DPM2D::setInteractionType(simControlStruct::interactionEnum interactionType
   if(simControl.interactionType == simControlStruct::interactionEnum::vertexVertex) {
     cout << "DPM2D::setInteractionType: interactionType: vertexVertex" << endl;
   } else if(simControl.interactionType == simControlStruct::interactionEnum::cellSmooth) {
+    initSmoothNeighbors(getNumVertices());
     cout << "DPM2D::setInteractionType: interactionType: cellSmooth" << endl;
   } else if(simControl.interactionType == simControlStruct::interactionEnum::vertexSmooth) {
+    initSmoothNeighbors(getNumVertices());
+    cout << "DPM2D::setInteractionType: vertexSmooth: initialized smooth neighbors" << endl;
     cout << "DPM2D::setInteractionType: interactionType: vertexSmooth" << endl;
   } else if(simControl.interactionType == simControlStruct::interactionEnum::all) {
     cout << "DPM2D::setInteractionType: interactionType: all" << endl;
@@ -531,8 +543,8 @@ thrust::host_vector<double> DPM2D::getBoxSize() {
 //**************************** shape variables *******************************//
 void DPM2D::setVertexRadii(thrust::host_vector<double> &rad_) {
   d_rad = rad_;
-  if(getSimulationType() == simControlStruct::simulationEnum::omp) {
-    cout << "DPM2D::setVertexRadii:: initialized radii on host" << endl;
+  if(getSimulationType() == simControlStruct::simulationEnum::omp || getSimulationType() == simControlStruct::simulationEnum::cpu) {
+    cout << "DPM2D::setVertexRadii:: initialized positions on host" << endl;
     h_rad = d_rad;
   }
 }
@@ -743,7 +755,7 @@ thrust::host_vector<double> DPM2D::getParticleTorques() {
 //************************** dynamical variables *****************************//
 void DPM2D::setVertexPositions(thrust::host_vector<double> &pos_) {
   d_pos = pos_;
-  if(getSimulationType() == simControlStruct::simulationEnum::omp) {
+  if(getSimulationType() == simControlStruct::simulationEnum::omp || getSimulationType() == simControlStruct::simulationEnum::cpu) {
     cout << "DPM2D::setVertexPositions:: initialized positions on host" << endl;
     h_pos = d_pos;
   }
@@ -848,6 +860,10 @@ thrust::host_vector<long> DPM2D::getNeighbors() {
   thrust::host_vector<long> neighborListFromDevice;
   neighborListFromDevice = d_neighborList;
   return neighborListFromDevice;
+}
+
+thrust::host_vector<long> DPM2D::getSmoothNeighbors() {
+  return h_smoothNeighborList;
 }
 
 thrust::host_vector<long> DPM2D::getLinkedList() {
@@ -1111,6 +1127,9 @@ void DPM2D::checkNeighbors() {
     case simControlStruct::neighborEnum::allToAll:
     break;
   }
+  //if(getSimulationType() == simControlStruct::simulationEnum::omp || getSimulationType() == simControlStruct::simulationEnum::cpu) {
+  //  calcSmoothNeighbors();
+  //}
 }
 
 
@@ -1206,6 +1225,7 @@ void DPM2D::setMonoSizeDistribution() {
   		d_rad[d_firstVertexInParticleId[particleId] + vertexId] = 0.5 * d_l0[d_firstVertexInParticleId[particleId] + vertexId];
     }
   }
+  h_rad = d_rad; //HOST
 }
 
 //void DPM2D::setBiSizeDistribution();
@@ -1375,6 +1395,7 @@ void DPM2D::scaleParticlePacking() {
   thrust::transform(d_particlePos.begin(), d_particlePos.end(), thrust::make_constant_iterator(scale), d_particlePos.begin(), thrust::divides<double>());
   // vertex variables
   thrust::transform(d_rad.begin(), d_rad.end(), thrust::make_constant_iterator(scale), d_rad.begin(), thrust::divides<double>());
+  h_rad = d_rad; //HOST
   thrust::transform(d_l0.begin(), d_l0.end(), thrust::make_constant_iterator(scale), d_l0.begin(), thrust::divides<double>());
   thrust::transform(d_a0.begin(), d_a0.end(), thrust::make_constant_iterator(scale * scale), d_a0.begin(), thrust::divides<double>());
   // boxSize
@@ -1393,6 +1414,7 @@ void DPM2D::scaleVertices(double scale) {
   thrust::transform(d_area.begin(), d_area.end(), thrust::make_constant_iterator(scale * scale), d_area.begin(), thrust::multiplies<double>());
   thrust::transform(d_l0.begin(), d_l0.end(), thrust::make_constant_iterator(scale), d_l0.begin(), thrust::multiplies<double>());
   thrust::transform(d_rad.begin(), d_rad.end(), thrust::make_constant_iterator(scale), d_rad.begin(), thrust::multiplies<double>());
+  h_rad = d_rad; //HOST
 }
 
 void DPM2D::scaleParticles(double scale) {
@@ -1523,12 +1545,13 @@ void DPM2D::setTwoParticleTest(double lx, double ly, double y0, double y1, doubl
   boxSize[1] = ly;
   setBoxSize(boxSize);
   // assign positions
-  d_particlePos[0 * nDim] = lx * 0.55;
+  d_particlePos[0 * nDim] = lx * 0.65;
   d_particlePos[0 * nDim + 1] = ly * y0;
-  d_particlePos[1 * nDim] = lx * 0.5;
+  d_particlePos[1 * nDim] = lx * 0.35;
   d_particlePos[1 * nDim + 1] = ly * y1;
   // initialize vertices
   initVerticesOnParticles();
+  setInitialPositions();
   initNeighbors(numVertices);
   syncNeighborsToDevice();
   // assign velocity
@@ -1537,11 +1560,11 @@ void DPM2D::setTwoParticleTest(double lx, double ly, double y0, double y1, doubl
   switch (simControl.particleType) {
     case simControlStruct::particleEnum::deformable:
     for(long vId = firstVertex; vId < lastVertex; vId++) {
-      d_vel[vId * nDim + 1] = vel1;
+      d_vel[vId * nDim] = vel1;
     }
     break;
     case simControlStruct::particleEnum::rigid:
-    d_particleVel[1 * nDim + 1] = vel1;
+    d_particleVel[1 * nDim] = vel1;
     break;
   }
 
@@ -1564,7 +1587,9 @@ void DPM2D::firstUpdate(double timeStep) {
     }
   };
 
-  thrust::for_each(r, r + numVertices, firstUpdate);
+  auto firstVertex = d_firstVertexInParticleId[1];
+	auto lastVertex = firstVertex + d_numVertexInParticleList[1];
+  thrust::for_each(r + firstVertex, r + lastVertex, firstUpdate);
 }
 
 void DPM2D::secondUpdate(double timeStep) {
@@ -1581,13 +1606,116 @@ void DPM2D::secondUpdate(double timeStep) {
     }
   };
 
-  thrust::for_each(r, r + numVertices, firstUpdate);
+  auto firstVertex = d_firstVertexInParticleId[1];
+	auto lastVertex = firstVertex + d_numVertexInParticleList[1];
+  thrust::for_each(r + firstVertex, r + lastVertex, firstUpdate);
+}
+
+void DPM2D::pinDeformableParticle(long pId) {
+  // pin particle to initial vertex positions with a strong attractive spring
+  long s_nDim(nDim);
+  auto r = thrust::counting_iterator<long>(0);
+	const double* boxSize = thrust::raw_pointer_cast(&d_boxSize[0]);
+	const double* initialPos = thrust::raw_pointer_cast(&d_initialPos[0]);
+	const double* pos = thrust::raw_pointer_cast(&d_pos[0]);
+	double* force = thrust::raw_pointer_cast(&d_force[0]);
+	double* energy = thrust::raw_pointer_cast(&d_energy[0]);
+
+  auto pinVertex = [=] __device__ (long vId) {
+    auto distanceSq = 0.0;
+    double delta[MAXDIM];
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      delta[dim] = pos[vId * s_nDim + dim] - initialPos[vId * s_nDim + dim];
+	    delta[dim] -= boxSize[dim] * round(delta[dim] / boxSize[dim]);
+      distanceSq += delta[dim] * delta[dim];
+    }
+    auto distance = sqrt(distanceSq);
+    if(distance > 0.0) {
+      auto gradMultiple = d_ec * distance;
+      #pragma unroll (MAXDIM)
+      for (long dim = 0; dim < s_nDim; dim++) {
+        force[vId * s_nDim + dim] += gradMultiple * delta[dim] / distance;
+      }
+      energy[vId] -= 0.5 * d_ec * distanceSq;
+    }
+  };
+
+  auto firstVertex = d_firstVertexInParticleId[pId];
+	auto lastVertex = firstVertex + d_numVertexInParticleList[pId];
+  thrust::for_each(r + firstVertex, r + lastVertex, pinVertex);
+}
+
+void DPM2D::addTangentialForce(long pId) {
+  // compute center of mass of particle 1
+  double com[MAXDIM] = {0.0,0.0};
+  for (long vId = d_firstVertexInParticleId[1]; vId < d_numVertexInParticleList[1]; vId++) {
+    for (long dim = 0; dim < nDim; dim++) {
+      com[dim] += d_pos[vId * nDim + dim];
+    }
+  }
+  for (long dim = 0; dim < nDim; dim++) {
+    com[dim] /= d_numVertexInParticleList[1];
+  }
+  // add velocity to particle 0 towards center of mass of particle 1
+  long s_nDim(nDim);
+  auto r = thrust::counting_iterator<long>(0);
+	const double* boxSize = thrust::raw_pointer_cast(&d_boxSize[0]);
+	const double* pos = thrust::raw_pointer_cast(&d_pos[0]);
+	double* force = thrust::raw_pointer_cast(&d_force[0]);
+	double* energy = thrust::raw_pointer_cast(&d_energy[0]);
+
+  auto addTangentialForceToVertex = [=] __device__ (long vId) {
+    auto distanceSq = 0.0;
+    double delta[MAXDIM];
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      delta[dim] = com[dim] - pos[vId * s_nDim + dim];
+	    delta[dim] -= boxSize[dim] * round(delta[dim] / boxSize[dim]);
+      distanceSq += delta[dim] * delta[dim];
+    }
+    auto distance = sqrt(distanceSq);
+    for (long dim = 0; dim < s_nDim; dim++) {
+      delta[dim] /= distance;
+    }
+    double tangent[MAXDIM];
+    tangent[0] = -delta[1];
+    tangent[1] = delta[0];
+    auto ratio = 1 / distance;
+    auto gradMultiple = 24 * d_el * (-pow(ratio,6)) / distance;
+    #pragma unroll (MAXDIM)
+    for (long dim = 0; dim < s_nDim; dim++) {
+      force[vId * s_nDim + dim] += d_el * tangent[dim];
+      force[vId * s_nDim + dim] += gradMultiple * delta[dim];
+    }
+    energy[vId] += 4 * d_el * (-pow(ratio,6));
+  };
+
+  auto firstVertex = d_firstVertexInParticleId[pId];
+	auto lastVertex = firstVertex + d_numVertexInParticleList[pId];
+  thrust::for_each(r + firstVertex, r + lastVertex, addTangentialForceToVertex);
+}
+
+void DPM2D::addForce(long pId) {
+  long s_nDim(nDim);
+  auto r = thrust::counting_iterator<long>(0);
+	double* force = thrust::raw_pointer_cast(&d_force[0]);
+
+  auto addForceToVertex = [=] __device__ (long vId) {
+    force[vId * s_nDim] += 0.1;
+  };
+
+  auto firstVertex = d_firstVertexInParticleId[pId];
+	auto lastVertex = firstVertex + d_numVertexInParticleList[pId];
+  thrust::for_each(r + firstVertex, r + lastVertex, addForceToVertex);
 }
 
 void DPM2D::testDeformableInteraction(double timeStep) {
   firstUpdate(timeStep);
   checkNeighbors();
   calcForceEnergy();
+  //addTangentialForce(0);
+  //pinDeformableParticle(1);
   secondUpdate(timeStep);
 }
 
@@ -1738,6 +1866,49 @@ void DPM2D::calcForceEnergyGPU() {
   }
 }
 
+thrust::host_vector<double> DPM2D::getInteractionForces() {
+  switch (simControl.simulationType) {
+    case simControlStruct::simulationEnum::gpu:
+    return getInteractionForcesGPU();
+    break;
+    default:
+    return h_interaction;
+    break;
+  }
+}
+
+thrust::host_vector<double> DPM2D::getInteractionForcesGPU() {
+  thrust::device_vector<double> d_interaction(d_force.size());
+  thrust::device_vector<double> d_interEnergy(d_energy.size());
+  thrust::device_vector<double> d_interParticleEnergy(d_particleEnergy.size());
+  thrust::fill(d_interaction.begin(), d_interaction.end(), double(0));
+  thrust::fill(d_interEnergy.begin(), d_interEnergy.end(), double(0));
+  thrust::fill(d_interParticleEnergy.begin(), d_interParticleEnergy.end(), double(0));
+  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
+  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+	double *interaction = thrust::raw_pointer_cast(&d_interaction[0]);
+	double *interEnergy = thrust::raw_pointer_cast(&d_interEnergy[0]);
+  double *interPEnergy = thrust::raw_pointer_cast(&d_interParticleEnergy[0]);
+  // compute interaction
+  switch (simControl.interactionType) {
+    case simControlStruct::interactionEnum::vertexVertex:
+    kernelCalcVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy);
+    break;
+    case simControlStruct::interactionEnum::vertexSmooth:
+    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy);
+    break;
+    case simControlStruct::interactionEnum::cellSmooth:
+    kernelCalcCellListSmoothInteraction<<<cellDimGrid, cellDimBlock>>>(rad, pos, interaction, interPEnergy);
+    break;
+    case simControlStruct::interactionEnum::all:
+    kernelCalcAllToAllVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy);
+    break;
+  }
+  thrust::host_vector<double> interactionFromDevice;
+  interactionFromDevice = d_interaction;
+  return interactionFromDevice;
+}
+
 void DPM2D::calcForceEnergyCPU() {
   calcShapeForceEnergy();
   switch (simControl.interactionType) {
@@ -1776,63 +1947,70 @@ double DPM2D::pbcDistance(double x1, double x2, double size) {
 }
 
 void DPM2D::calcVertexVertexInteraction() {
+  h_pos = d_pos;
+  h_force = d_force;
+  h_energy = d_energy;
   std::vector<double> thisPos(MAXDIM), otherPos(MAXDIM), delta(MAXDIM);
   double overlap, ratio, ratio6, ratio12, gradMultiple, epot;
-  for (long vertexId = 0; vertexId < numVertices; vertexId++) {
-    for (long dim = 0; dim < nDim; dim++) {
-      thisPos[dim] = d_pos[vertexId * nDim + dim];
-    }
-    double thisRad = d_rad[vertexId];
-    long particleId = d_particleIdList[vertexId];
-    for (long nListId = 0; nListId < d_maxNeighborList[vertexId]; nListId++) {
-      long otherId = d_neighborList[vertexId * neighborListSize + nListId];
-    //for (otherId = 0; otherId < numVertices; otherId++) {
-    //  long otherParticleId = d_particleIdList[otherId];
-    //  if ((particleId != otherParticleId) && (vertexId != otherId)) {
-      if ((vertexId != otherId) && (otherId != -1)) {
-        for (long dim = 0; dim < nDim; dim++) {
-          otherPos[dim] = d_pos[otherId * nDim + dim];
-        }
-        double otherRad = d_rad[otherId];
-        double radSum = thisRad + otherRad;
-        double distanceSq = 0;
-        for (long dim = 0; dim < nDim; dim++) {
-          delta[dim] = pbcDistance(thisPos[dim], otherPos[dim], d_boxSize[dim]);
-          distanceSq += delta[dim] * delta[dim];
-        }
-        double distance = sqrt(distanceSq);
-        bool addForce = false;
-        switch (simControl.potentialType) {
-          case simControlStruct::potentialEnum::harmonic:
-          overlap = 1 - distance / radSum;
-          if(overlap > 0) {
-            addForce = true;
-            gradMultiple = ec * overlap / radSum;
-            epot = (0.5 * ec * overlap * overlap) * 0.5;
-          }
-          break;
-          case simControlStruct::potentialEnum::wca:
-          if(distance <= (WCAcut * radSum)) {
-            addForce = true;
-            ratio = radSum / distance;
-            ratio6 = pow(ratio, 6);
-            ratio12 = ratio6 * ratio6;
-            gradMultiple = 4 * ec * (12 * ratio12 - 6 * ratio6) / distance;
-            epot = 0.5 * ec * (4 * (ratio12 - ratio6) + 1);
-          }
-          break;
-        }
-        if(addForce == true) {
-          //cout << "checking vertexId: " << vertexId << " and otherId: " << otherId << endl;
+  for (long particleId = 0; particleId < numParticles; particleId++) {
+    auto firstVertex = d_firstVertexInParticleId[particleId];
+    auto lastVertex = firstVertex + d_numVertexInParticleList[particleId];
+    for (long vertexId = firstVertex; vertexId < lastVertex; vertexId++) {
+      for (long dim = 0; dim < nDim; dim++) {
+        thisPos[dim] = h_pos[vertexId * nDim + dim];
+        h_interaction[vertexId * nDim + dim] = 0.0;
+      }
+      double thisRad = h_rad[vertexId];
+      //long particleId = h_particleIdList[vertexId];
+      for (long nListId = 0; nListId < h_maxNeighborList[vertexId]; nListId++) {
+        long otherId = h_neighborList[vertexId * neighborListSize + nListId];
+        if ((vertexId != otherId) && (otherId != -1)) {
           for (long dim = 0; dim < nDim; dim++) {
-            d_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
-            d_force[otherId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
+            otherPos[dim] = h_pos[otherId * nDim + dim];
           }
-          d_energy[vertexId] += epot;
+          double otherRad = h_rad[otherId];
+          double radSum = thisRad + otherRad;
+          double distanceSq = 0.0;
+          for (long dim = 0; dim < nDim; dim++) {
+            delta[dim] = pbcDistance(thisPos[dim], otherPos[dim], h_boxSize[dim]);
+            distanceSq += delta[dim] * delta[dim];
+          }
+          double distance = sqrt(distanceSq);
+          bool addForce = false;
+          switch (simControl.potentialType) {
+            case simControlStruct::potentialEnum::harmonic:
+            overlap = 1 - distance / radSum;
+            if(overlap > 0) {
+              addForce = true;
+              gradMultiple = ec * overlap / radSum;
+              epot = (0.5 * ec * overlap * overlap) * 0.5;
+            }
+            break;
+            case simControlStruct::potentialEnum::wca:
+            if(distance <= (WCAcut * radSum)) {
+              addForce = true;
+              ratio = radSum / distance;
+              ratio6 = pow(ratio, 6);
+              ratio12 = ratio6 * ratio6;
+              gradMultiple = 4 * ec * (12 * ratio12 - 6 * ratio6) / distance;
+              epot = 0.5 * ec * (4 * (ratio12 - ratio6) + 1);
+            }
+            break;
+          }
+          if(addForce == true) {
+            //cout << "checking vertexId: " << vertexId << " and otherId: " << otherId << endl;
+            for (long dim = 0; dim < nDim; dim++) {
+                h_force[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
+                h_interaction[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
+              }
+            h_energy[vertexId] += epot;
+          }
         }
       }
     }
   }
+  d_force = h_force;
+  d_energy = h_energy;
 }
 
 void DPM2D::calcVertexVertexInteractionOMP() {
@@ -1840,13 +2018,14 @@ void DPM2D::calcVertexVertexInteractionOMP() {
   h_force = d_force;
   h_energy = d_energy;
   //#pragma omp parallel for default(none) shared(h_boxSize, h_pos, h_force, h_energy, h_particleIdList, h_neighborList, h_maxNeighborList, simControl, ec, WCAcut, numVertices, neighborListSize, nDim)
-  #pragma omp parallel for shared(h_force, h_energy)
+  #pragma omp parallel for// reduction(+,h_force) reduction(+,h_energy) reduction(+,h_interaction)
   {
-    std::vector<double> thisPos(MAXDIM), otherPos(MAXDIM), delta(MAXDIM);
-    double overlap, ratio, ratio6, ratio12, gradMultiple, epot;
     for (long vertexId = 0; vertexId < numVertices; vertexId++) {
+      std::vector<double> thisPos(MAXDIM), otherPos(MAXDIM), delta(MAXDIM);
+      double overlap, ratio, ratio6, ratio12, gradMultiple, epot;
       for (long dim = 0; dim < nDim; dim++) {
         thisPos[dim] = h_pos[vertexId * nDim + dim];
+        h_interaction[vertexId * nDim + dim] = 0.0;
       }
       double thisRad = h_rad[vertexId];
       long particleId = h_particleIdList[vertexId];
@@ -1887,14 +2066,11 @@ void DPM2D::calcVertexVertexInteractionOMP() {
           }
           if(addForce == true) {
             //cout << "checking vertexId: " << vertexId << " and otherId: " << otherId << endl;
-            #pragma omp atomic seq_cst
-            {
-              for (long dim = 0; dim < nDim; dim++) {
-                h_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
-                h_force[otherId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
+            for (long dim = 0; dim < nDim; dim++) {
+                h_force[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
+                h_interaction[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
               }
-              h_energy[vertexId] += epot;
-            }
+            h_energy[vertexId] += epot;
           }
         }
       }
@@ -1933,63 +2109,159 @@ long DPM2D::getNextId(long vertexId, long particleId) {
 }
 
 double DPM2D::getProjection(double* thisPos, double* otherPos, double* previousPos, double length) {
-	return (pbcDistance(thisPos[0], previousPos[0], d_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], d_boxSize[0]) + pbcDistance(thisPos[1], previousPos[1], d_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], d_boxSize[1])) / (length * length);
+	return (pbcDistance(thisPos[0], previousPos[0], h_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], h_boxSize[1])) / (length * length);
 }
 
 double DPM2D::calcCross(double* thisPos, double* otherPos, double* previousPos) {
-	return pbcDistance(previousPos[0], otherPos[0], d_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], d_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], d_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], d_boxSize[1]);
+  return pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], h_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]);
+}
+
+bool DPM2D::checkSmoothInteraction(double* thisPos, double* otherPos, double* previousPos, double radSum) {
+  double segment[MAXDIM], relSegment[MAXDIM], relPos[MAXDIM], projPos[MAXDIM], delta[MAXDIM];
+  double distance, overlap, distanceSq = 0.0;
+  bool isSmooth = false;
+  for (long dim = 0; dim < nDim; dim++) {
+    segment[dim] = pbcDistance(otherPos[dim], previousPos[dim], h_boxSize[dim]);
+    distanceSq += segment[dim] * segment[dim];
+  }
+  double length = sqrt(distanceSq);
+  // this takes into account periodic boundaries with respect to the segment
+  for (long dim = 0; dim < nDim; dim++) {
+    relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
+    relPos[dim] = previousPos[dim] + relSegment[dim];
+  }
+  // compute projection on the line between other and previous
+  double projection = getProjection(relPos, otherPos, previousPos, length);
+  if(projection > 0 && projection <= 1) {
+    double reducedProj = max(0.0, min(1.0, projection));
+    for (long dim = 0; dim < nDim; dim++) {
+      projPos[dim] = previousPos[dim] + reducedProj * segment[dim];
+    }
+    distanceSq = 0;
+    for (long dim = 0; dim < nDim; dim++) {
+      delta[dim] = pbcDistance(thisPos[dim], projPos[dim], h_boxSize[dim]);
+      distanceSq += delta[dim] * delta[dim];
+    }
+    distance = sqrt(distanceSq);
+    switch (simControl.potentialType) {
+      case simControlStruct::potentialEnum::harmonic:
+      overlap = 1 - distance / radSum;
+      if(overlap > 0) {
+        isSmooth = true;
+      }
+      break;
+      case simControlStruct::potentialEnum::wca:
+      if(distance <= (WCAcut * radSum)) {
+        isSmooth = true;
+      }
+      break;
+    }
+  }
+  return isSmooth;
+}
+
+void DPM2D::calcSmoothNeighbors() {
+  thrust::fill(h_maxSmoothNeighborList.begin(), h_maxSmoothNeighborList.end(), 0);
+  smoothNeighborListSize = 2 * neighborListSize;
+  h_smoothNeighborList.resize(numVertices * smoothNeighborListSize);
+  thrust::fill(h_smoothNeighborList.begin(), h_smoothNeighborList.end(), -1L);
+  h_pos = d_pos;
+  double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM];
+  // identify neighbors interact with a smooth force
+  for (long vertexId = 0; vertexId < numVertices; vertexId++) {
+    long particleId = d_particleIdList[vertexId];
+    for (long dim = 0; dim < nDim; dim++) {
+      thisPos[dim] = h_pos[vertexId * nDim + dim];
+    }
+    double thisRad = h_rad[vertexId];
+    for (long nListId = 0; nListId < h_maxNeighborList[vertexId]; nListId++) {
+      long otherId = h_neighborList[vertexId * neighborListSize + nListId];
+      if (otherId != -1) {
+        for (long dim = 0; dim < nDim; dim++) {
+          otherPos[dim] = h_pos[otherId * nDim + dim];
+        }
+        double radSum = thisRad + h_rad[otherId];
+        // get previous vertex
+        long otherParticleId = h_particleIdList[otherId];
+        long previousId = getPreviousId(otherId, otherParticleId);
+        for (long dim = 0; dim < nDim; dim++) {
+          previousPos[dim] = d_pos[previousId * nDim + dim];
+        }
+        bool isSmoothNeighbor = false;
+        isSmoothNeighbor = checkSmoothInteraction(thisPos, otherPos, previousPos, radSum);
+        // add smooth neighbors to vertexId
+        if(h_maxSmoothNeighborList[vertexId] < smoothNeighborListSize) {
+          h_smoothNeighborList[vertexId * smoothNeighborListSize + h_maxSmoothNeighborList[vertexId]] = otherId*isSmoothNeighbor -1*(!isSmoothNeighbor);
+          h_smoothNeighborList[vertexId * smoothNeighborListSize + h_maxSmoothNeighborList[vertexId] + 1] = previousId*isSmoothNeighbor -1*(!isSmoothNeighbor);
+        }
+        h_maxSmoothNeighborList[vertexId] += 2 * isSmoothNeighbor;
+        // add smooth neighbor to otherId
+        if(h_maxSmoothNeighborList[otherId] < smoothNeighborListSize) {
+          h_smoothNeighborList[otherId * smoothNeighborListSize + h_maxSmoothNeighborList[otherId]] = vertexId*isSmoothNeighbor -1*(!isSmoothNeighbor);
+        }
+        h_maxSmoothNeighborList[otherId] += isSmoothNeighbor;
+        // add smooth neighbor to previousId
+        if(h_maxSmoothNeighborList[previousId] < smoothNeighborListSize) {
+          h_smoothNeighborList[previousId * smoothNeighborListSize + h_maxSmoothNeighborList[previousId]] = vertexId*isSmoothNeighbor -1*(!isSmoothNeighbor);
+        }
+        h_maxSmoothNeighborList[previousId] += isSmoothNeighbor;
+      }
+    }
+  }
 }
 
 void DPM2D::calcSmoothInteraction() {
-  long vertexId, otherId, particleId, otherParticleId, previousId, secondPreviousId;
-  double distance, distanceSq, thisRad, otherRad, radSum, projection, length, cross, absCross, sign, previousProj;
-  double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
-  double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM], relSegment[MAXDIM]; //relPos[MAXDIM]
-  double gradMultiple, epot, overlap, ratio, ratio6, ratio12;
-  for (vertexId = 0; vertexId < numVertices; vertexId++) {
-    particleId = d_particleIdList[vertexId];
+  h_pos = d_pos;
+  h_force = d_force;
+  h_particleEnergy = d_particleEnergy;
+  thrust::fill(h_interaction.begin(), h_interaction.end(), double(0));
+  for (long vertexId = 0; vertexId < numVertices; vertexId++) {
+    double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
+    double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM], relSegment[MAXDIM], relPos[MAXDIM];
+    double distance, gradMultiple, overlap, ratio, ratio6, ratio12, epot;
+    long particleId = d_particleIdList[vertexId];
     for (long dim = 0; dim < nDim; dim++) {
-      thisPos[dim] = d_pos[vertexId * nDim + dim];
+      thisPos[dim] = h_pos[vertexId * nDim + dim];
     }
-    thisRad = d_rad[vertexId];
-    for (long nListId = 0; nListId < d_maxNeighborList[vertexId]; nListId++) {
-      otherId = d_neighborList[vertexId * neighborListSize + nListId];
-    //for (otherId = 0; otherId < numVertices; otherId++) {
-    //  otherParticleId = d_particleIdList[otherId];
-    //  if ((particleId != otherParticleId) && (vertexId != otherId)) {
+    double thisRad = h_rad[vertexId];
+    //for (long otherId = 0; otherId < numVertices; otherId++) {
+    //  long otherParticleId = h_particleIdList[otherId];
+    //  if ((vertexId != otherId) && (otherParticleId != particleId)) {
+    for (long nListId = 0; nListId < h_maxNeighborList[vertexId]; nListId++) {
+      long otherId = h_neighborList[vertexId * neighborListSize + nListId];
       if ((vertexId != otherId) && (otherId != -1)) {
         for (long dim = 0; dim < nDim; dim++) {
-          otherPos[dim] = d_pos[otherId * nDim + dim];
+          otherPos[dim] = h_pos[otherId * nDim + dim];
         }
-        otherRad = d_rad[otherId];
-        radSum = thisRad + otherRad;
+        double otherRad = h_rad[otherId];
+        double radSum = thisRad + otherRad;
         // get previous vertex
-        otherParticleId = d_particleIdList[otherId];
-        previousId = getPreviousId(otherId, otherParticleId);
-        distanceSq = 0;
+        long otherParticleId = h_particleIdList[otherId];
+        long previousId = getPreviousId(otherId, otherParticleId);
+        double distanceSq = 0;
         for (long dim = 0; dim < nDim; dim++) {
           previousPos[dim] = d_pos[previousId * nDim + dim];
-          segment[dim] = pbcDistance(otherPos[dim], previousPos[dim], d_boxSize[dim]);
+          segment[dim] = pbcDistance(otherPos[dim], previousPos[dim], h_boxSize[dim]);
           distanceSq += segment[dim] * segment[dim];
         }
-        length = sqrt(distanceSq);
+        double length = sqrt(distanceSq);
         // this takes into account periodic boundaries with respect to the segment
         for (long dim = 0; dim < nDim; dim++) {
-          relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], d_boxSize[dim]);
-          thisPos[dim] = previousPos[dim] + relSegment[dim];
+          relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
+          relPos[dim] = previousPos[dim] + relSegment[dim];
         }
         // compute projection on the line between other and previous
-        //projection = (pbcDistance(thisPos[0], previousPos[0], d_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], d_boxSize[0]) + pbcDistance(thisPos[1], previousPos[1], d_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], d_boxSize[1])) / (length * length);
-        projection = getProjection(thisPos, otherPos, previousPos, length);
+        //double projection = (pbcDistance(relPos[0], previousPos[0], h_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) + pbcDistance(relPos[1], previousPos[1], h_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], h_boxSize[1])) / (length * length);
+        double projection = getProjection(relPos, otherPos, previousPos, length);
         //cout << "projection: " << projection << " length: " << length << endl;
-        if(projection > 0 && projection <= 1) {
+        if(projection >= 0 && projection < 1) {
           double reducedProj = max(0.0, min(1.0, projection));
           for (long dim = 0; dim < nDim; dim++) {
             projPos[dim] = previousPos[dim] + reducedProj * segment[dim];
           }
           distanceSq = 0;
           for (long dim = 0; dim < nDim; dim++) {
-            delta[dim] = pbcDistance(thisPos[dim], projPos[dim], d_boxSize[dim]);
+            delta[dim] = pbcDistance(thisPos[dim], projPos[dim], h_boxSize[dim]);
             distanceSq += delta[dim] * delta[dim];
           }
           distance = sqrt(distanceSq);
@@ -2000,7 +2272,7 @@ void DPM2D::calcSmoothInteraction() {
             if(overlap > 0) {
               addForce = true;
               gradMultiple = ec * overlap / radSum;
-              epot = (0.5 * ec * overlap * overlap);
+              epot = (0.5 * ec * overlap * overlap) * 0.5;
             }
             break;
             case simControlStruct::potentialEnum::wca:
@@ -2015,37 +2287,55 @@ void DPM2D::calcSmoothInteraction() {
             break;
           }
           if(addForce == true) {
-            //cross = pbcDistance(previousPos[0], otherPos[0], d_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], d_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], d_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], d_boxSize[1]);
-            cross = calcCross(thisPos, otherPos, previousPos);
-            absCross = fabs(cross);
-            sign = absCross / cross;
+            //if(vertexId == 36) cout << "36 vertex-segment interacton with " << otherId << " " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
+            //if(vertexId == 37) cout << "37 vertex-segment interacton with " << otherId << " " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
+            //if(vertexId == 7) cout << "7 vertex-segment interacton with " << otherId << " " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
+            //double cross = pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], h_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]);
+            double cross = calcCross(thisPos, otherPos, previousPos);
+            double absCross = fabs(cross);
+            double sign = absCross / cross;
             // this vertex
-            d_force[vertexId * nDim] += gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], d_boxSize[1]) / length;
-	  	      d_force[vertexId * nDim + 1] += gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], d_boxSize[0]) / length;
-		        // other vertex
-	  	      d_force[otherId * nDim] += gradMultiple * (sign * pbcDistance(thisPos[1], previousPos[1], d_boxSize[1]) + absCross * pbcDistance(previousPos[0], otherPos[0], d_boxSize[0]) / (length * length)) / length;
-	  	      d_force[otherId * nDim + 1] += gradMultiple * (sign * pbcDistance(previousPos[0], thisPos[0], d_boxSize[0]) + absCross * pbcDistance(previousPos[1], otherPos[1], d_boxSize[1]) / (length * length)) / length;
+            h_force[vertexId * nDim] += gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / length;
+            h_force[vertexId * nDim + 1] += gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) / length;
+            // other vertex
+            h_force[otherId * nDim] += gradMultiple * (sign * pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) + absCross * pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) / (length * length)) / length;
+            h_force[otherId * nDim + 1] += gradMultiple * (sign * pbcDistance(previousPos[0], thisPos[0], h_boxSize[0]) + absCross * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / (length * length)) / length;
             // previous vertex
-	  	      d_force[previousId * nDim] += gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], d_boxSize[1]) - absCross * pbcDistance(previousPos[0], otherPos[0], d_boxSize[0]) / (length * length)) / length;
-	  	      d_force[previousId * nDim + 1] += gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], d_boxSize[0]) - absCross * pbcDistance(previousPos[1], otherPos[1], d_boxSize[1]) / (length * length)) / length;
-            d_particleEnergy[particleId] += epot * 0.5;
-            d_particleEnergy[otherParticleId] += epot * 0.5;
+            h_force[previousId * nDim] += gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - absCross * pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) / (length * length)) / length;
+            h_force[previousId * nDim + 1] += gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], h_boxSize[0]) - absCross * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / (length * length)) / length; 
+            // add energy
+            h_particleEnergy[particleId] += epot;
+            h_particleEnergy[otherParticleId] += epot;
+            // this vertex
+            h_interaction[vertexId * nDim] += gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / length;
+            h_interaction[vertexId * nDim + 1] += gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) / length;
+            // other vertex
+            h_interaction[otherId * nDim] += gradMultiple * (sign * pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) + absCross * pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) / (length * length)) / length;
+            h_interaction[otherId * nDim + 1] += gradMultiple * (sign * pbcDistance(previousPos[0], thisPos[0], h_boxSize[0]) + absCross * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / (length * length)) / length;
+            // previous vertex
+            h_interaction[previousId * nDim] += gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - absCross * pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) / (length * length)) / length;
+            h_interaction[previousId * nDim + 1] += gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], h_boxSize[0]) - absCross * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / (length * length)) / length;
           }
-        } else if(projection <= 0) {
+        } else if(projection < 0) {
           // check that previous vertex is not already interacting with this vertex through a segment
-          secondPreviousId = getPreviousId(previousId, otherParticleId);
+          long secondPreviousId = getPreviousId(previousId, otherParticleId);
           distanceSq = 0;
           for (long dim = 0; dim < nDim; dim++) {
             secondPreviousPos[dim] = d_pos[secondPreviousId * nDim + dim];
-            delta[dim] = pbcDistance(secondPreviousPos[dim], previousPos[dim], d_boxSize[dim]);
+            delta[dim] = pbcDistance(secondPreviousPos[dim], previousPos[dim], h_boxSize[dim]);
             distanceSq += delta[dim] * delta[dim];
           }
           length = sqrt(distanceSq);
-					previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
-          if(previousProj > 1) {
+          for (long dim = 0; dim < nDim; dim++) {
+            relSegment[dim] = pbcDistance(thisPos[dim], secondPreviousPos[dim], h_boxSize[dim]);
+            relPos[dim] = secondPreviousPos[dim] + relSegment[dim];
+          }
+          //double previousProj = (pbcDistance(relPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(relPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (length * length);
+          double previousProj = getProjection(relPos, previousPos, secondPreviousPos, length);
+          if(previousProj >= 1) {
             distanceSq = 0;
             for (long dim = 0; dim < nDim; dim++) {
-              delta[dim] = pbcDistance(thisPos[dim], previousPos[dim], d_boxSize[dim]);
+              delta[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
               distanceSq += delta[dim] * delta[dim];
             }
             distance = sqrt(distanceSq);
@@ -2056,7 +2346,7 @@ void DPM2D::calcSmoothInteraction() {
               if(overlap > 0) {
                 addForce = true;
                 gradMultiple = ec * overlap / radSum;
-                epot = (0.5 * ec * overlap * overlap);
+                epot = (0.5 * ec * overlap * overlap) * 0.5;
               }
               break;
               case simControlStruct::potentialEnum::wca:
@@ -2071,33 +2361,48 @@ void DPM2D::calcSmoothInteraction() {
               break;
             }
             if(addForce == true) {
-              //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
-              for (long dim = 0; dim < nDim; dim++) {
-                d_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
-                d_force[previousId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
-              }
-              d_particleEnergy[particleId] += epot * 0.5;
-              d_particleEnergy[otherParticleId] += epot * 0.5;
+              //bool isSmooth = false;
+              //for (long smoothId = 0; smoothId < h_maxSmoothNeighborList[previousId]; smoothId++) {
+              //  if(h_smoothNeighborList[previousId * smoothNeighborListSize + smoothId] == vertexId) {
+              //    isSmooth = true;
+              //  }
+              //}
+              //if(!isSmooth) {
+                //if(vertexId == 36) cout << "36 vertex-vertex interacton with " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
+                //if(vertexId == 37) cout << "37 vertex-vertex interacton with " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
+                //if(vertexId == 7) cout << "7 vertex-vertex interacton with " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
+                //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
+                for (long dim = 0; dim < nDim; dim++) {
+                  h_force[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
+                  h_force[previousId * nDim + dim] -= gradMultiple * delta[dim] / distance;
+                  h_interaction[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
+                  h_interaction[previousId * nDim + dim] -= gradMultiple * delta[dim] / distance;
+                }
+                h_particleEnergy[particleId] += epot;
+                h_particleEnergy[otherParticleId] += epot;
+              //}
             }
           }
         }
       }
     }
   }
+  d_force = h_force;
+  d_particleEnergy = h_particleEnergy;
 }
 
 void DPM2D::calcSmoothInteractionOMP() {
   h_pos = d_pos;
   h_force = d_force;
-  h_energy = d_energy;
   h_particleEnergy = d_particleEnergy;
+  thrust::fill(h_interaction.begin(), h_interaction.end(), double(0));
+  double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
+  double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM], relSegment[MAXDIM], relPos[MAXDIM];
+  double distance, gradMultiple, overlap, ratio, ratio6, ratio12, epot;
   //#pragma omp parallel for default(none) shared(d_pos, d_rad, d_particleIdList, d_neighborList, d_maxNeighborList, d_boxSize, d_force, d_energy, d_particleEnergy, simControl, ec, WCAcut, numVertices, neighborListSize, nDim)
-  #pragma omp parallel for reduction(+,h_force) reduction(+,h_energy) reduction(+,h_particleEnergy)
+  #pragma omp parallel for reduction(+,h_force) reduction(+,h_particleEnergy) reduction(+,h_interaction)
   {
     for (long vertexId = 0; vertexId < numVertices; vertexId++) {
-      std::vector<double> thisPos(MAXDIM), otherPos(MAXDIM), previousPos(MAXDIM), secondPreviousPos(MAXDIM);
-      std::vector<double> delta(MAXDIM), segment(MAXDIM), projPos(MAXDIM), relSegment(MAXDIM), relPos(MAXDIM);
-      double distance, gradMultiple, overlap, ratio, ratio6, ratio12, epot = 0.0;
       long particleId = d_particleIdList[vertexId];
       for (long dim = 0; dim < nDim; dim++) {
         thisPos[dim] = h_pos[vertexId * nDim + dim];
@@ -2124,11 +2429,11 @@ void DPM2D::calcSmoothInteractionOMP() {
           // this takes into account periodic boundaries with respect to the segment
           for (long dim = 0; dim < nDim; dim++) {
             relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
-            thisPos[dim] = previousPos[dim] + relSegment[dim];
+            relPos[dim] = previousPos[dim] + relSegment[dim];
           }
           // compute projection on the line between other and previous
-          double projection = (pbcDistance(thisPos[0], previousPos[0], h_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], h_boxSize[1])) / (length * length);
-          //projection = getProjection(thisPos, otherPos, previousPos, length);
+          //double projection = (pbcDistance(relPos[0], previousPos[0], h_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) + pbcDistance(relPos[1], previousPos[1], h_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], h_boxSize[1])) / (length * length);
+          double projection = getProjection(relPos, otherPos, previousPos, length);
           //cout << "projection: " << projection << " length: " << length << endl;
           if(projection > 0 && projection <= 1) {
             double reducedProj = max(0.0, min(1.0, projection));
@@ -2163,12 +2468,12 @@ void DPM2D::calcSmoothInteractionOMP() {
               break;
             }
             if(addForce == true) {
-              double cross = pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], h_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]);
-              //cross = calcCross(thisPos, otherPos, previousPos);
+              //double cross = pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], h_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]);
+              double cross = calcCross(thisPos, otherPos, previousPos);
               double absCross = fabs(cross);
               double sign = absCross / cross;
-              #pragma omp atomic seq_cst
-              {
+              //#pragma omp atomic seq_cst
+              //{
                 // this vertex
                 h_force[vertexId * nDim] += gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / length;
                 h_force[vertexId * nDim + 1] += gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) / length;
@@ -2181,21 +2486,34 @@ void DPM2D::calcSmoothInteractionOMP() {
                 // add energy
                 h_particleEnergy[particleId] += epot;
                 h_particleEnergy[otherParticleId] += epot;
-              }
+                // this vertex
+                h_interaction[vertexId * nDim] += gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / length;
+                h_interaction[vertexId * nDim + 1] += gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) / length;
+                // other vertex
+                h_interaction[otherId * nDim] += gradMultiple * (sign * pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) + absCross * pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) / (length * length)) / length;
+                h_interaction[otherId * nDim + 1] += gradMultiple * (sign * pbcDistance(previousPos[0], thisPos[0], h_boxSize[0]) + absCross * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / (length * length)) / length;
+                // previous vertex
+                h_interaction[previousId * nDim] += gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - absCross * pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) / (length * length)) / length;
+                h_interaction[previousId * nDim + 1] += gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], h_boxSize[0]) - absCross * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / (length * length)) / length;
+              //}
             }
           } else if(projection <= 0) {
             // check that previous vertex is not already interacting with this vertex through a segment
-            //long secondPreviousId = getPreviousId(previousId, otherParticleId);
-            //distanceSq = 0;
-            //for (long dim = 0; dim < nDim; dim++) {
-            //  secondPreviousPos[dim] = d_pos[secondPreviousId * nDim + dim];
-            //  delta[dim] = pbcDistance(secondPreviousPos[dim], previousPos[dim], h_boxSize[dim]);
-            //  distanceSq += delta[dim] * delta[dim];
-            //}
-            //length = sqrt(distanceSq);
-            //double previousProj = (pbcDistance(thisPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (length * length);
-            //previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
-            //if(previousProj > 1) {
+            long secondPreviousId = getPreviousId(previousId, otherParticleId);
+            distanceSq = 0;
+            for (long dim = 0; dim < nDim; dim++) {
+              secondPreviousPos[dim] = d_pos[secondPreviousId * nDim + dim];
+              delta[dim] = pbcDistance(secondPreviousPos[dim], previousPos[dim], h_boxSize[dim]);
+              distanceSq += delta[dim] * delta[dim];
+            }
+            length = sqrt(distanceSq);
+            for (long dim = 0; dim < nDim; dim++) {
+              relSegment[dim] = pbcDistance(thisPos[dim], secondPreviousPos[dim], h_boxSize[dim]);
+              relPos[dim] = secondPreviousPos[dim] + relSegment[dim];
+            }
+            //double previousProj = (pbcDistance(relPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(relPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (length * length);
+            double previousProj = getProjection(relPos, previousPos, secondPreviousPos, length);
+            if(previousProj > 1) {
               distanceSq = 0;
               for (long dim = 0; dim < nDim; dim++) {
                 delta[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
@@ -2209,7 +2527,7 @@ void DPM2D::calcSmoothInteractionOMP() {
                 if(overlap > 0) {
                   addForce = true;
                   gradMultiple = ec * overlap / radSum;
-                  epot = (0.5 * ec * overlap * overlap);
+                  epot = (0.5 * ec * overlap * overlap) * 0.5;
                 }
                 break;
                 case simControlStruct::potentialEnum::wca:
@@ -2225,24 +2543,25 @@ void DPM2D::calcSmoothInteractionOMP() {
               }
               if(addForce == true) {
                 //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
-                #pragma omp atomic seq_cst
-                {
+                //#pragma omp atomic seq_cst
+                //{
                   for (long dim = 0; dim < nDim; dim++) {
-                    h_force[vertexId * nDim + dim] += 0.5 * gradMultiple * delta[dim] / distance;
-                    h_force[previousId * nDim + dim] -= 0.5 * gradMultiple * delta[dim] / distance;
+                    h_force[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
+                    //h_force[previousId * nDim + dim] -= gradMultiple * delta[dim] / distance;
+                    h_interaction[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
+                    //h_interaction[previousId * nDim + dim] -= gradMultiple * delta[dim] / distance;
                   }
                   h_particleEnergy[particleId] += epot;
                   h_particleEnergy[otherParticleId] += epot;
-                }
+                //}
               }
-            //}
+            }
           }
         }
       }
     }
   }
   d_force = h_force;
-  d_energy = h_energy;
   d_particleEnergy = h_particleEnergy;
 }
 

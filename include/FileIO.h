@@ -69,13 +69,13 @@ public:
   }
 
   void saveDeformableEnergy(long step, double timeStep, long numVertices) {
-    double epot = dpm_->getPotentialEnergy();
-    double ekin = dpm_->getKineticEnergy();
+    double epot = dpm_->getPotentialEnergy() / numVertices;
+    double ekin = dpm_->getKineticEnergy() / numVertices;
     double etot = epot + ekin;
     energyFile << step + 1 << "\t" << (step + 1) * timeStep << "\t";
-    energyFile << setprecision(precision) << epot / numVertices << "\t";
-    energyFile << setprecision(precision) << ekin / numVertices << "\t";
-    energyFile << setprecision(precision) << etot / numVertices << "\t";
+    energyFile << setprecision(precision) << epot << "\t";
+    energyFile << setprecision(precision) << ekin << "\t";
+    energyFile << setprecision(precision) << etot << "\t";
     energyFile << setprecision(precision) << dpm_->getPhi() << endl;
   }
 
@@ -363,7 +363,8 @@ public:
     save1DIndexFile(dirName + "numVertexInParticleList.dat", dpm_->getNumVertexInParticleList());
     save1DFile(dirName + "radii.dat", dpm_->getVertexRadii());
     save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
-    save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
+    //save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
+    save2DFile(dirName + "forces.dat", dpm_->getInteractionForces(), dpm_->nDim);
     save1DFile(dirName + "restAreas.dat", dpm_->getRestAreas());
     save1DFile(dirName + "segmentLengths.dat", dpm_->getSegmentLengths());
     save1DFile(dirName + "restLengths.dat", dpm_->getRestLengths());
@@ -463,6 +464,9 @@ public:
   void saveNeighbors(string dirName) {
     if(dpm_->simControl.neighborType == simControlStruct::neighborEnum::neighbor) {
       save2DIndexFile(dirName + "neighborList.dat", dpm_->getNeighbors(), dpm_->neighborListSize);
+      //if(dpm_->simControl.interactionType == simControlStruct::interactionEnum::vertexSmooth) {
+      //  save2DIndexFile(dirName + "smoothNeighborList.dat", dpm_->getSmoothNeighbors(), dpm_->smoothNeighborListSize);
+      //}
     } else if(dpm_->simControl.neighborType == simControlStruct::neighborEnum::cell) {
       save1DIndexFile(dirName + "linkedList.dat", dpm_->getLinkedList());
       save1DIndexFile(dirName + "listHeader.dat", dpm_->getListHeader());

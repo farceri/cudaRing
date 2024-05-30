@@ -110,6 +110,7 @@ public:
   thrust::device_vector<double> d_vel;
   thrust::device_vector<double> d_force;
   thrust::host_vector<double> h_force; //HOST
+  thrust::host_vector<double> h_interaction; //HOST
   thrust::device_vector<double> d_energy;
   thrust::host_vector<double> h_energy; //HOST
   thrust::device_vector<double> d_lastPos;
@@ -173,6 +174,9 @@ public:
   long partMaxNeighbors;
 	long partNeighborListSize;
   long neighborLimit;
+  thrust::host_vector<long> h_smoothNeighborList; //HOST
+  thrust::host_vector<long> h_maxSmoothNeighborList; //HOST
+	long smoothNeighborListSize;
 
   void printDeviceProperties();
 
@@ -189,6 +193,8 @@ public:
   void initContacts(long numParticles_);
 
   void initNeighbors(long numVertices_);
+
+  void initSmoothNeighbors(long numVertices_);
 
   double initCells(long numVertices_, double cellSize_);
 
@@ -350,6 +356,8 @@ public:
 
   thrust::host_vector<long> getNeighbors();
 
+  thrust::host_vector<long> getSmoothNeighbors();
+
   thrust::host_vector<long> getLinkedList();
 
   thrust::host_vector<long> getListHeader();
@@ -480,6 +488,12 @@ public:
 
   void secondUpdate(double timeStep);
 
+  void pinDeformableParticle(long pId);
+
+  void addTangentialForce(long pId);
+
+  void addForce(long pId);
+
   void testDeformableInteraction(double timeStep);
 
   void firstRigidUpdate(double timeStep);
@@ -495,6 +509,10 @@ public:
   void calcForceEnergy();
 
   void calcForceEnergyGPU();
+
+  thrust::host_vector<double> getInteractionForces();
+
+  thrust::host_vector<double> getInteractionForcesGPU();
 
   void calcForceEnergyCPU();
 
@@ -515,6 +533,10 @@ public:
   double getProjection(double* thisPos, double* otherPos, double* previousPos, double length);
 
   double calcCross(double* thisPos, double* otherPos, double* previousPos);
+
+  bool checkSmoothInteraction(double* thisPos, double* otherPos, double* previousPos, double radSum);
+
+  void calcSmoothNeighbors();
 
   void calcSmoothInteraction();
 
