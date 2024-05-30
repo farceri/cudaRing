@@ -538,6 +538,8 @@ public:
 
   void calcSmoothNeighbors();
 
+  double checkAngle(double angle, double limit);
+
   void calcSmoothInteraction();
 
   void calcSmoothInteractionOMP();

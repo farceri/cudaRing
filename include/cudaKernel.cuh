@@ -856,10 +856,10 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 				auto previousId = getPreviousId(otherId, otherParticleId);
 				getVertexPos(previousId, pos, previousPos);
 				getDelta(otherPos, previousPos, segment);
-				getDelta(thisPos, previousPos, relSegment);
-				for (long dim = 0; dim < d_nDim; dim++) {
-					relPos[dim] = previousPos[dim] + relSegment[dim];
-				}
+				//getDelta(thisPos, previousPos, relSegment);
+				//for (long dim = 0; dim < d_nDim; dim++) {
+				//	relPos[dim] = previousPos[dim] + relSegment[dim];
+				//}
 				auto length = calcNorm(segment);
 				auto projection = getProjection(relPos, otherPos, previousPos, length);
 				getProjectionPos(previousPos, segment, projPos, projection);
@@ -873,11 +873,11 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 					getVertexPos(secondPreviousId, pos, secondPreviousPos);
 					getDelta(previousPos, secondPreviousPos, previousSegment);
 					length = calcNorm(previousSegment);
-					getDelta(thisPos, secondPreviousPos, relSegment);
-					for (long dim = 0; dim < d_nDim; dim++) {
-						relPos[dim] = secondPreviousPos[dim] + relSegment[dim];
-					}
-					auto previousProj = getProjection(relPos, previousPos, secondPreviousPos, length);
+					//getDelta(thisPos, secondPreviousPos, relSegment);
+					//for (long dim = 0; dim < d_nDim; dim++) {
+					//	relPos[dim] = secondPreviousPos[dim] + relSegment[dim];
+					//}
+					auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
 					switch (d_simControl.concavityType) {
 						case simControlStruct::concavityEnum::off:
 						if(previousProj > 1) {
