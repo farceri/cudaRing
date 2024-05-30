@@ -339,11 +339,10 @@ void DPM2D::setInteractionType(simControlStruct::interactionEnum interactionType
   if(simControl.interactionType == simControlStruct::interactionEnum::vertexVertex) {
     cout << "DPM2D::setInteractionType: interactionType: vertexVertex" << endl;
   } else if(simControl.interactionType == simControlStruct::interactionEnum::cellSmooth) {
-    initSmoothNeighbors(getNumVertices());
     cout << "DPM2D::setInteractionType: interactionType: cellSmooth" << endl;
   } else if(simControl.interactionType == simControlStruct::interactionEnum::vertexSmooth) {
-    initSmoothNeighbors(getNumVertices());
-    cout << "DPM2D::setInteractionType: vertexSmooth: initialized smooth neighbors" << endl;
+    //initSmoothNeighbors(getNumVertices());
+    //cout << "DPM2D::setInteractionType: vertexSmooth: initialized smooth neighbors" << endl;
     cout << "DPM2D::setInteractionType: interactionType: vertexSmooth" << endl;
   } else if(simControl.interactionType == simControlStruct::interactionEnum::all) {
     cout << "DPM2D::setInteractionType: interactionType: all" << endl;
@@ -2229,7 +2228,7 @@ void DPM2D::calcSmoothInteraction() {
   thrust::fill(h_interaction.begin(), h_interaction.end(), double(0));
   for (long vertexId = 0; vertexId < numVertices; vertexId++) {
     double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
-    double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM], interSegment[MAXDIM], previousSegment[MAXDIM];// relSegment[MAXDIM], relPos[MAXDIM];
+    double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM];//, interSegment[MAXDIM], previousSegment[MAXDIM];// relSegment[MAXDIM], relPos[MAXDIM];
     double distance, gradMultiple, overlap, ratio, ratio6, ratio12, epot;
     long particleId = d_particleIdList[vertexId];
     for (long dim = 0; dim < nDim; dim++) {
@@ -2465,7 +2464,7 @@ void DPM2D::calcSmoothInteractionOMP() {
   {
     for (long vertexId = 0; vertexId < numVertices; vertexId++) {
       double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
-      double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM], relSegment[MAXDIM], relPos[MAXDIM];
+      double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM];//, relSegment[MAXDIM], relPos[MAXDIM];
       double distance, gradMultiple, overlap, ratio, ratio6, ratio12, epot;
       long particleId = d_particleIdList[vertexId];
       for (long dim = 0; dim < nDim; dim++) {

@@ -31,10 +31,10 @@ int main(int argc, char **argv) {
   std::string outDir, energyFile, inDir = argv[1], currentDir, dirSample;
   // initialize sp object
 	DPM2D dp(numParticles, nDim, numVertexPerParticle);
-  dirSample = "harmonic-smooth-omp/";
+  dirSample = "harmonic-smooth-gpu/";
   dp.printDeviceProperties();
   long numVertices = dp.getNumVertices();
-  dp.setSimulationType(simControlStruct::simulationEnum::omp);
+  dp.setSimulationType(simControlStruct::simulationEnum::gpu);
   if(rigid == true) {
     dp.setParticleType(simControlStruct::particleEnum::deformable);
   }

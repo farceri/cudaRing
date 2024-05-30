@@ -776,6 +776,7 @@ inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const 
 // clockwise projection
 inline __device__ double getProjection(const double* thisPos, const double* otherPos, const double* previousPos, const double length) {
 	return (pbcDistance(thisPos[0], previousPos[0], 0) * pbcDistance(otherPos[0], previousPos[0], 0) + pbcDistance(thisPos[1], previousPos[1], 1) * pbcDistance(otherPos[1], previousPos[1], 1)) / (length * length);
+
 }
 
 inline __device__ void getProjectionPos(const double* previousPos, const double* segment, double* projPos, const double proj) {
@@ -792,11 +793,10 @@ inline __device__ double calcCross(const double* thisPos, const double* otherPos
 inline __device__ double calcVertexSegmentInteraction(const double* thisPos, const double* projPos, const double* otherPos, const double* previousPos, const double length, const double radSum, double* thisForce, double* otherForce, double* previousForce) {
 	//double segment[MAXDIM];
 	auto epot = 0.0;
-	// compute segment and the overlap between its center and this vertex
-	auto cross = calcCross(thisPos, otherPos, previousPos);
-	auto absCross = fabs(cross);
 	auto gradMultiple = calcGradMultipleAndEnergy(thisPos, projPos, radSum, epot);
 	if (gradMultiple != 0) {
+		auto cross = calcCross(thisPos, otherPos, previousPos);
+		auto absCross = fabs(cross);
 		auto sign = cross / absCross;
 		// this vertex
 	  	atomicAdd(&thisForce[0], gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], 1) / length);
@@ -842,7 +842,7 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 		auto otherRad = 0.0;
 		auto interaction = 0.0;
 		double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
-		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM], interSegment[MAXDIM], relSegment[MAXDIM], relPos[MAXDIM];
+		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM], interSegment[MAXDIM];//, relSegment[MAXDIM], relPos[MAXDIM];
 		getVertexPos(vertexId, pos, thisPos);
 		auto thisRad = rad[vertexId];
 		auto particleId = d_particleIdListPtr[vertexId];
@@ -861,17 +861,20 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 				//	relPos[dim] = previousPos[dim] + relSegment[dim];
 				//}
 				auto length = calcNorm(segment);
-				auto projection = getProjection(relPos, otherPos, previousPos, length);
-				getProjectionPos(previousPos, segment, projPos, projection);
+				auto projection = getProjection(thisPos, otherPos, previousPos, length);
 				// check if the interaction is vertex-segment
-				if(projection > 0 && projection < 1) {
+				if(projection >= 0 && projection < 1) {
+					getProjectionPos(previousPos, segment, projPos, projection);
 					interaction = calcVertexSegmentInteraction(thisPos, projPos, otherPos, previousPos, length, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim], &force[previousId*d_nDim]);
 					atomicAdd(&pEnergy[particleId], interaction);
 					atomicAdd(&pEnergy[otherParticleId], interaction);
+					//pEnergy[particleId] += interaction;
+					//pEnergy[otherParticleId] += interaction;
+					//__syncthreads();
 				} else if(projection < 0) {
 					auto secondPreviousId = getPreviousId(previousId, otherParticleId);
 					getVertexPos(secondPreviousId, pos, secondPreviousPos);
-					getDelta(previousPos, secondPreviousPos, previousSegment);
+					getDelta(secondPreviousPos, previousPos, previousSegment);
 					length = calcNorm(previousSegment);
 					//getDelta(thisPos, secondPreviousPos, relSegment);
 					//for (long dim = 0; dim < d_nDim; dim++) {
@@ -880,10 +883,13 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 					auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
 					switch (d_simControl.concavityType) {
 						case simControlStruct::concavityEnum::off:
-						if(previousProj > 1) {
+						if(previousProj >= 1) {
 							interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
 							atomicAdd(&pEnergy[particleId], interaction);
 							atomicAdd(&pEnergy[otherParticleId], interaction);
+							//pEnergy[particleId] += interaction;
+							//pEnergy[otherParticleId] += interaction;
+							//__syncthreads();
 						}
 						break;
 						case simControlStruct::concavityEnum::on:
@@ -910,10 +916,16 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 								interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
 								atomicAdd(&pEnergy[particleId], interaction);
 								atomicAdd(&pEnergy[otherParticleId], interaction);
+								//pEnergy[particleId] += interaction;
+								//pEnergy[otherParticleId] += interaction;
+								//__syncthreads();
 							} else if(previousProj > 1) {
 								interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
 								atomicAdd(&pEnergy[particleId], interaction);
 								atomicAdd(&pEnergy[otherParticleId], interaction);
+								//pEnergy[particleId] += interaction;
+								//pEnergy[otherParticleId] += interaction;
+								//__syncthreads();
 							}
 						}
 						break;
