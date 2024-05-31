@@ -23,14 +23,14 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool read = false, readState = false, cpu = false, omp = true, wca = true, smooth = true, concavity = false;
+  bool read = false, readState = false, cpu = false, omp = false, wca = true, smooth = true, concavity = false;
   long numParticles = atol(argv[4]), nDim = 2, numVertexPerParticle = 32, numVertices;
   long step, iteration = 0, maxIterations = 5e06, maxSearchStep = 1500, searchStep = 0, updateCount;
   long maxStep = atof(argv[6]), printFreq = int(maxStep / 10), saveFreq = int(printFreq / 10), minStep = 20, numStep = 0;
-  double sigma, polydispersity = 0.2, previousPhi, currentPhi = 0.2, deltaPhi = 2e-03, phiTh = 0.9;
+  double sigma, polydispersity = 0.2, previousPhi, currentPhi = 0.1, deltaPhi = 2e-03, phiTh = 0.9;
   double cutDistance, cutoff = 0.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
   double Tinject = atof(argv[3]), maxDelta, scaleFactor, timeStep = atof(argv[2]), size;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
+  double ea = 1e05, el = 20, eb = 1, ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
   thrust::host_vector<double> boxSize(nDim);
   std::string outDir = argv[1], currentDir, inDir, energyFile;
   // fire paramaters: a_start, f_dec, f_inc, f_a, dt, dt_max, a
@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexVertex);
     // initialize polydisperse packing and minimize soft particle packing with harmonic potential
     dpm.setPolySizeDistribution(calA0, polydispersity);
-    dpm.setScaledRandomParticles(currentPhi, 1.2); //extraRad
+    dpm.setScaledRandomParticles(currentPhi, 1.5); //extraRad
     dpm.scaleParticlePacking();
     dpm.setEnergyCosts(0, 0, 0, ec);
     // minimize soft sphere packing
