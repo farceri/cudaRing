@@ -2341,7 +2341,7 @@ void DPM2D::calcSmoothInteraction() {
           //}
           double previousProj = (pbcDistance(thisPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (length * length);
           //double previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
-          if(previousProj >= 1) { // no for concave - yes for convex
+          if(previousProj >= 1) { // WORKS FOR CONVEX ONLY - FOR CONCAVE NEED TO INCLUDE INVERSE INTERACTION
             distanceSq = 0;
             for (long dim = 0; dim < nDim; dim++) {
               delta[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);

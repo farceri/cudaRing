@@ -43,7 +43,7 @@ void Langevin::integrate() {
 
 void Langevin::injectKineticEnergy() {
   // generate random numbers between 0 and Tscale for thermal noise
-  thrust::counting_iterator<long> index_sequence_begin(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
   thrust::transform(index_sequence_begin, index_sequence_begin + dpm_->numParticles * dpm_->nDim, d_thermalVel.begin(), gaussNum(0.f,noiseVar));
   long s_nDim(dpm_->nDim);
   auto r = thrust::counting_iterator<long>(0);
@@ -78,7 +78,7 @@ void Langevin::updateVelocity(double timeStep) {
 
 void Langevin::updateThermalVel() {
   // generate random numbers between 0 and 1 for thermal noise
-  thrust::counting_iterator<long> index_sequence_begin(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
   thrust::transform(index_sequence_begin, index_sequence_begin + dpm_->numParticles * dpm_->nDim, d_thermalVel.begin(), gaussNum(0.f,noiseVar));
   // update thermal velocity
   long s_nDim(dpm_->nDim);
@@ -118,9 +118,9 @@ void Langevin2::integrate() {
 
 void Langevin2::updateThermalVel() {
   // extract two noises and compute noise terms
-  thrust::counting_iterator<long> index_sequence_begin1(0);
+  thrust::counting_iterator<long> index_sequence_begin1(lrand48());
   thrust::transform(index_sequence_begin1, index_sequence_begin1 + dpm_->numParticles * dpm_->nDim, d_rand.begin(), gaussNum(0.f,1.f));
-  thrust::counting_iterator<long> index_sequence_begin2(0);
+  thrust::counting_iterator<long> index_sequence_begin2(lrand48());
   thrust::transform(index_sequence_begin2, index_sequence_begin2 + dpm_->numParticles * dpm_->nDim, d_rando.begin(), gaussNum(0.f,1.f));
   // update thermal velocity
   long s_nDim(dpm_->nDim);
@@ -203,9 +203,9 @@ void ActiveLangevin::integrate() {
 
 void ActiveLangevin::updateThermalVel() {
   // extract two noises and compute noise terms
-  thrust::counting_iterator<long> index_sequence_begin1(0);
+  thrust::counting_iterator<long> index_sequence_begin1(lrand48());
   thrust::transform(index_sequence_begin1, index_sequence_begin1 + dpm_->numParticles * dpm_->nDim, d_rand.begin(), gaussNum(0.f,1.f));
-  thrust::counting_iterator<long> index_sequence_begin2(0);
+  thrust::counting_iterator<long> index_sequence_begin2(lrand48());
   thrust::transform(index_sequence_begin2, index_sequence_begin2 + dpm_->numParticles * dpm_->nDim, d_rando.begin(), gaussNum(0.f,1.f));
   // update thermal velocity
   long s_nDim(dpm_->nDim);
@@ -230,7 +230,7 @@ void ActiveLangevin::updateThermalVel() {
 
   // generate active forces
   double amplitude = sqrt(2. * config.Dr * dpm_->dt);
-  thrust::counting_iterator<long> index_sequence_begin(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
   thrust::transform(index_sequence_begin, index_sequence_begin + dpm_->numParticles, d_pActiveAngle.begin(), gaussNum(0.f,1.f));
   double s_driving(config.driving);
   auto s = thrust::counting_iterator<long>(0);
@@ -308,7 +308,7 @@ void Brownian::integrate() {
 void Brownian::updateVelocity(double timeStep) {
   double mobility = 1/gamma;
   // generate random numbers between 0 and 1 for thermal noise
-  thrust::counting_iterator<long> index_sequence_begin(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
   thrust::transform(index_sequence_begin, index_sequence_begin + dpm_->numParticles * dpm_->nDim, d_thermalVel.begin(), gaussNum(0.f,noiseVar));
   // update vertex velocity
   double *vel = thrust::raw_pointer_cast(&(dpm_->d_vel[0]));
@@ -330,7 +330,7 @@ void ActiveBrownian::updateVelocity(double timeStep) {
   double amplitude = sqrt(2. * config.Dr);
   double mobility = 1/gamma;
   // generate random numbers between 0 and 1 for angle update
-  thrust::counting_iterator<long> index_sequence_begin(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
   thrust::transform(index_sequence_begin, index_sequence_begin + dpm_->numParticles, d_rand.begin(), gaussNum(0.f,1.f));
   // update particle direction
   auto r = thrust::counting_iterator<long>(0);
@@ -383,7 +383,7 @@ void ActiveBrownianPlastic::updateVelocity(double timeStep) {
   double amplitude = sqrt(2. * config.Dr);
   double mobility = 1/gamma;
   // generate random numbers between 0 and 1 for angle update
-  thrust::counting_iterator<long> index_sequence_begin(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
   thrust::transform(index_sequence_begin, index_sequence_begin + dpm_->numParticles, d_rand.begin(), gaussNum(0.f,1.f));
   // update particle direction
   auto r = thrust::counting_iterator<long>(0);
@@ -432,7 +432,7 @@ void RigidLangevin::integrate() {
 void RigidLangevin::injectKineticEnergy() {
   // generate random numbers between 0 and Tscale for thermal noise
   double amplitude = sqrt(config.Tinject);
-  thrust::counting_iterator<long> index_sequence_begin(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
   thrust::transform(index_sequence_begin, index_sequence_begin + dpm_->numParticles * dpm_->nDim, dpm_->d_particleVel.begin(), gaussNum(0.f,amplitude));
   double *pVel = thrust::raw_pointer_cast(&(dpm_->d_particleVel[0]));
   kernelConserveParticleMomentum<<<1, dpm_->dimBlock>>>(pVel);
