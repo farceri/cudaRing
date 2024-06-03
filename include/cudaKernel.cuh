@@ -838,11 +838,10 @@ inline __device__ double checkAngle(double angle, double limit) {
 __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos, double* force, double* pEnergy) {
 	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
-		//thread_block block = this_thread_block();
 		auto otherRad = 0.0;
 		auto interaction = 0.0;
 		double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
-		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM], interSegment[MAXDIM];//, relSegment[MAXDIM], relPos[MAXDIM];
+		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM];//, relSegment[MAXDIM], relPos[MAXDIM];
 		getVertexPos(vertexId, pos, thisPos);
 		auto thisRad = rad[vertexId];
 		auto particleId = d_particleIdListPtr[vertexId];
@@ -862,78 +861,34 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 				//}
 				auto length = calcNorm(segment);
 				auto projection = getProjection(thisPos, otherPos, previousPos, length);
+				// compare projection with previous vertex - concave particles can interact with two consecutive segments
+				auto secondPreviousId = getPreviousId(previousId, otherParticleId);
+				getVertexPos(secondPreviousId, pos, secondPreviousPos);
+				getDelta(secondPreviousPos, previousPos, previousSegment);
+				auto previousLength = calcNorm(previousSegment);
+				auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, previousLength);
 				// check if the interaction is vertex-segment
+				bool isPreviousVertexSegment = false;
 				if(projection >= 0 && projection < 1) {
 					getProjectionPos(previousPos, segment, projPos, projection);
 					interaction = calcVertexSegmentInteraction(thisPos, projPos, otherPos, previousPos, length, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim], &force[previousId*d_nDim]);
 					atomicAdd(&pEnergy[particleId], interaction);
 					atomicAdd(&pEnergy[otherParticleId], interaction);
-					//pEnergy[particleId] += interaction;
-					//pEnergy[otherParticleId] += interaction;
-					//__syncthreads();
+					if(previousProj >= 0 && previousProj < 1) { // other particle is concave - subtract excessive interaction with shared vertex
+						isPreviousVertexSegment = true;
+						interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+						atomicAdd(&pEnergy[particleId], -interaction);
+						atomicAdd(&pEnergy[otherParticleId], -interaction);
+					}
 				} else if(projection < 0) {
-					auto secondPreviousId = getPreviousId(previousId, otherParticleId);
-					getVertexPos(secondPreviousId, pos, secondPreviousPos);
-					getDelta(secondPreviousPos, previousPos, previousSegment);
-					length = calcNorm(previousSegment);
-					//getDelta(thisPos, secondPreviousPos, relSegment);
-					//for (long dim = 0; dim < d_nDim; dim++) {
-					//	relPos[dim] = secondPreviousPos[dim] + relSegment[dim];
-					//}
-					auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
-					switch (d_simControl.concavityType) {
-						case simControlStruct::concavityEnum::off:
-						if(previousProj >= 1) {
-							interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-							atomicAdd(&pEnergy[particleId], interaction);
-							atomicAdd(&pEnergy[otherParticleId], interaction);
-							//pEnergy[particleId] += interaction;
-							//pEnergy[otherParticleId] += interaction;
-							//__syncthreads();
-						}
-						break;
-						case simControlStruct::concavityEnum::on:
-						// check if the vertex-vertex interaction is concave or convex
-						getDelta(thisPos, previousPos, interSegment);
-						auto endEndAngle = atan2(interSegment[0]*segment[1] - interSegment[1]*segment[0], interSegment[0]*segment[0] + interSegment[1]*segment[1]);
-						checkAngle(endEndAngle, PI/2);
-						auto endCapAngle = atan2(previousSegment[0]*segment[1] - previousSegment[1]*segment[0], previousSegment[0]*segment[0] + previousSegment[1]*segment[1]);
-						checkAngle(endCapAngle, PI);
-						auto isCapConvexInteraction = (endEndAngle >= 0 && endEndAngle <= endCapAngle);
-						auto isCapConcaveInteraction = (endCapAngle < 0 && endEndAngle > (PI - fabs(endCapAngle)) && endEndAngle < PI);
-						//isConcaveInteraction = false;
-						auto isCapInteraction = (isCapConvexInteraction || isCapConcaveInteraction);
-						// check if the interaction is inverse
-						auto inverseEndEndAngle = (endEndAngle - 2*PI * (endEndAngle > PI));
-						auto isConcaveInteraction = (endCapAngle < 0 && inverseEndEndAngle < 0 && inverseEndEndAngle >= endCapAngle);
-						// endEndAngle for other end of the segment
-						endEndAngle = PI - endEndAngle + fabs(endCapAngle);
-						endEndAngle -= 2*PI * (endEndAngle > 2*PI);
-						endEndAngle += 2*PI * (endEndAngle < 0);
-						auto isInverseInteraction = (isConcaveInteraction || (endCapAngle > 0 && (endEndAngle < endCapAngle)));
-						if((projection < 0 && isCapInteraction) || (projection > 0 && isInverseInteraction)) {
-							if(isInverseInteraction) {
-								interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-								atomicAdd(&pEnergy[particleId], interaction);
-								atomicAdd(&pEnergy[otherParticleId], interaction);
-								//pEnergy[particleId] += interaction;
-								//pEnergy[otherParticleId] += interaction;
-								//__syncthreads();
-							} else if(previousProj > 1) {
-								interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-								atomicAdd(&pEnergy[particleId], interaction);
-								atomicAdd(&pEnergy[otherParticleId], interaction);
-								//pEnergy[particleId] += interaction;
-								//pEnergy[otherParticleId] += interaction;
-								//__syncthreads();
-							}
-						}
-						break;
+					if(previousProj >= 1 && isPreviousVertexSegment == false) {
+					interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+					atomicAdd(&pEnergy[particleId], interaction);
+					atomicAdd(&pEnergy[otherParticleId], interaction);
 					}
 				}
 			}
 		}
-	//block.sync();
   	}
 }
 

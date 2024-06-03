@@ -27,11 +27,11 @@ int main(int argc, char **argv) {
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double LJcutoff = 4, cutoff = 0.5, cutDistance, timeStep = atof(argv[2]), sigma, timeUnit, size;
   double sigma0 = 1, lx = 2.8, ly = 2.8, vel1 = 2e-01, y0 = 0.28, y1 = 0.65, epot, ekin;
-  double ea = 1e05, el = 20, eb = 1, ec = 1;
+  double ea = 1e05, el = 20, eb = 0, ec = 1;
   std::string outDir, energyFile, inDir = argv[1], currentDir, dirSample;
   // initialize sp object
 	DPM2D dp(numParticles, nDim, numVertexPerParticle);
-  dirSample = "harmonic-smooth-gpu/";
+  dirSample = "harmonic-smooth-gpu-eb0/";
   dp.printDeviceProperties();
   long numVertices = dp.getNumVertices();
   dp.setSimulationType(simControlStruct::simulationEnum::gpu);
