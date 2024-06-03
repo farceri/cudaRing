@@ -366,13 +366,13 @@ public:
     //save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
     save2DFile(dirName + "forces.dat", dpm_->getInteractionForces(), dpm_->nDim);
     save1DFile(dirName + "restAreas.dat", dpm_->getRestAreas());
-    save1DFile(dirName + "segmentLengths.dat", dpm_->getSegmentLengths());
+    //save1DFile(dirName + "segmentLengths.dat", dpm_->getSegmentLengths());
     save1DFile(dirName + "restLengths.dat", dpm_->getRestLengths());
-    save1DFile(dirName + "segmentAngles.dat", dpm_->getSegmentAngles());
+    //save1DFile(dirName + "segmentAngles.dat", dpm_->getSegmentAngles());
     save1DFile(dirName + "restAngles.dat", dpm_->getRestAngles());
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
-    save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
-    save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
+    //save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
+    //save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
     save1DFile(dirName + "particleRad.dat", dpm_->getParticleRadii());
   }
 

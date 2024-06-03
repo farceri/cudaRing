@@ -68,7 +68,6 @@ DPM2D::DPM2D(long nParticles, long dim, long nVertexPerParticle) {
   cutDistance = 1;
   updateCount = 0;
   d_boxSize.resize(nDim);
-  h_boxSize.resize(nDim); //HOST
   thrust::fill(d_boxSize.begin(), d_boxSize.end(), double(1));
   d_stress.resize(nDim * nDim);
   thrust::fill(d_stress.begin(), d_stress.end(), double(0));
@@ -106,7 +105,6 @@ void DPM2D::printDeviceProperties() {
 
 void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
   d_rad.resize(numVertices_);
-  h_rad.resize(numVertices_); //HOST
   d_l0.resize(numVertices_);
   d_length.resize(numVertices_);
   d_perimeter.resize(numParticles_);
@@ -130,13 +128,9 @@ void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
 
 void DPM2D::initDynamicalVariables(long numVertices_) {
   d_pos.resize(numVertices_ * nDim);
-  h_pos.resize(numVertices_ * nDim); //HOST
   d_vel.resize(numVertices_ * nDim);
   d_force.resize(numVertices_ * nDim);
-  h_force.resize(numVertices_ * nDim); //HOST
-  h_interaction.resize(numVertices_ * nDim); //HOST
   d_energy.resize(numVertices_);
-  h_energy.resize(numVertices_); //HOST
   d_lastPos.resize(numVertices_ * nDim);
   d_disp.resize(numVertices_);
   thrust::fill(d_pos.begin(), d_pos.end(), double(0));
@@ -151,7 +145,6 @@ void DPM2D::initParticleVariables(long numParticles_) {
   d_particleVel.resize(numParticles_ * nDim);
   d_particleForce.resize(numParticles_ * nDim);
   d_particleEnergy.resize(numParticles_);
-  h_particleEnergy.resize(numParticles_); //HOST
   d_particleDisp.resize(numParticles_);
   d_particleLastPos.resize(numParticles_ * nDim);
   thrust::fill(d_particleVel.begin(), d_particleVel.end(), double(0));
@@ -182,9 +175,11 @@ void DPM2D::initRotationalVariables(long numVertices_, long numParticles_) {
   d_torque.resize(numVertices_);
   d_particleAngvel.resize(numParticles_);
   d_particleTorque.resize(numParticles_);
+  d_momentOfInertia.resize(numParticles_);
   thrust::fill(d_torque.begin(), d_torque.end(), double(0));
   thrust::fill(d_particleAngvel.begin(), d_particleAngvel.end(), double(0));
   thrust::fill(d_particleTorque.begin(), d_particleTorque.end(), double(0));
+  thrust::fill(d_momentOfInertia.begin(), d_momentOfInertia.end(), double(0));
 }
 
 void DPM2D::initContacts(long numParticles_) {
@@ -206,17 +201,27 @@ void DPM2D::initNeighbors(long numVertices_) {
   maxNeighbors = 0;
   d_neighborList.resize(numVertices_);
   d_maxNeighborList.resize(numVertices_);
-  h_maxNeighborList.resize(numVertices_); //HOST
   thrust::fill(d_neighborList.begin(), d_neighborList.end(), -1L);
   thrust::fill(d_maxNeighborList.begin(), d_maxNeighborList.end(), maxNeighbors);
 }
 
 void DPM2D::initSmoothNeighbors(long numVertices_) {
   smoothNeighborListSize = 0;
-  h_smoothNeighborList.resize(numVertices_); //HOST
-  h_maxSmoothNeighborList.resize(numVertices_); //HOST
   thrust::fill(h_smoothNeighborList.begin(), h_smoothNeighborList.end(), -1L);
   thrust::fill(h_maxSmoothNeighborList.begin(), h_maxSmoothNeighborList.end(), 0);
+}
+
+void DPM2D::initHostVariables(long numVertices_, long numParticles_) {
+  h_boxSize.resize(nDim); //HOST
+  h_rad.resize(numVertices_); //HOST
+  h_pos.resize(numVertices_ * nDim); //HOST
+  h_force.resize(numVertices_ * nDim); //HOST
+  h_interaction.resize(numVertices_ * nDim); //HOST
+  h_energy.resize(numVertices_); //HOST
+  h_particleEnergy.resize(numParticles_); //HOST
+  h_maxNeighborList.resize(numVertices_); //HOST
+  h_smoothNeighborList.resize(numVertices_); //HOST
+  h_maxSmoothNeighborList.resize(numVertices_); //HOST
 }
 
 double DPM2D::initCells(long numVertices_, double cellSize_) {
@@ -262,7 +267,9 @@ void DPM2D::initParticleIdList() {
 
   long* particleIdList = thrust::raw_pointer_cast(&d_particleIdList[0]);
   cudaMemcpyToSymbol(d_particleIdListPtr, &particleIdList, sizeof(particleIdList));
-  h_particleIdList = d_particleIdList; //HOST
+  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+    h_particleIdList = d_particleIdList; //HOST
+  }
 }
 
 //**************************** setters and getters ***************************//
@@ -279,10 +286,12 @@ void DPM2D::syncSimControlFromDevice() {
 void DPM2D::setSimulationType(simControlStruct::simulationEnum simulationType_) {
 	simControl.simulationType = simulationType_;
   if(simControl.simulationType == simControlStruct::simulationEnum::gpu) {
+    initHostVariables(numVertices, numParticles);
     cout << "DPM2D::setSimulationType: simulationType: gpu" << endl;
   } else if(simControl.simulationType == simControlStruct::simulationEnum::cpu) {
     cout << "DPM2D::setSimulationType: simulationType: cpu" << endl;
   } else if(simControl.simulationType == simControlStruct::simulationEnum::omp) {
+    initHostVariables(numVertices, numParticles);
     cout << "DPM2D::setSimulationType: simulationType: omp" << endl;
   } else {
     cout << "DPM2D::setSimulationType: please specify valid simulationType: gpu, cpu or omp" << endl;
@@ -522,7 +531,9 @@ void DPM2D::setBoxSize(thrust::host_vector<double> &boxSize_) {
     d_boxSize = boxSize_;
     double* boxSize = thrust::raw_pointer_cast(&(d_boxSize[0]));
     cudaMemcpyToSymbol(d_boxSizePtr, &boxSize, sizeof(boxSize));
-    h_boxSize = d_boxSize; //HOST
+    if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+      h_boxSize = d_boxSize; //HOST
+    }
   } else {
     cout << "DPM2D::setBoxSize: size of boxSize does not match nDim" << endl;
   }
@@ -544,7 +555,7 @@ void DPM2D::setVertexRadii(thrust::host_vector<double> &rad_) {
   d_rad = rad_;
   if(getSimulationType() == simControlStruct::simulationEnum::omp || getSimulationType() == simControlStruct::simulationEnum::cpu) {
     cout << "DPM2D::setVertexRadii:: initialized positions on host" << endl;
-    h_rad = d_rad;
+    h_rad = d_rad; //HOST
   }
 }
 
@@ -756,7 +767,7 @@ void DPM2D::setVertexPositions(thrust::host_vector<double> &pos_) {
   d_pos = pos_;
   if(getSimulationType() == simControlStruct::simulationEnum::omp || getSimulationType() == simControlStruct::simulationEnum::cpu) {
     cout << "DPM2D::setVertexPositions:: initialized positions on host" << endl;
-    h_pos = d_pos;
+    h_pos = d_pos; //HOST
   }
 }
 
@@ -1224,7 +1235,9 @@ void DPM2D::setMonoSizeDistribution() {
   		d_rad[d_firstVertexInParticleId[particleId] + vertexId] = 0.5 * d_l0[d_firstVertexInParticleId[particleId] + vertexId];
     }
   }
-  h_rad = d_rad; //HOST
+  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+    h_rad = d_rad; //HOST
+  }
 }
 
 //void DPM2D::setBiSizeDistribution();
@@ -1272,7 +1285,9 @@ void DPM2D::setPolySizeDistribution(double calA0_, double polyDispersity) {
       //cout << "vertexId: " << d_firstVertexInParticleId[particleId] + vertexId << " l0: " << d_l0[d_firstVertexInParticleId[particleId] + vertexId] << " rad: " << d_rad[d_firstVertexInParticleId[particleId] + vertexId] << endl;
     }
   }
-  h_rad = d_rad; //HOST
+  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+    h_rad = d_rad; //HOST
+  }
 }
 
 void DPM2D::setSinusoidalRestAngles(double thetaA, double thetaK) {
@@ -1308,7 +1323,9 @@ void DPM2D::setRandomParticles(double phi0, double extraRad_) {
     d_l0[vertexId] /= scale;
     d_rad[vertexId] /= scale;
   }
-  h_rad = d_rad; //HOST
+  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+    h_rad = d_rad; //HOST
+  }
   // need to set this otherwise forces are zeros
   setLengthScaleToOne();
   cout << "DPM2D::setRandomParticles: particle packing fraction: " << getPreferredPhi() << " " << areaSum/(boxSize[0] * boxSize[1]) << endl;
@@ -1374,7 +1391,9 @@ void DPM2D::scalePacking(double scale) {
   // vertex variables
   thrust::transform(d_pos.begin(), d_pos.end(), thrust::make_constant_iterator(scale), d_pos.begin(), thrust::divides<double>());
   thrust::transform(d_rad.begin(), d_rad.end(), thrust::make_constant_iterator(scale), d_rad.begin(), thrust::divides<double>());
-  h_rad = d_rad; //HOST
+  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+    h_rad = d_rad; //HOST
+  }
   thrust::transform(d_l0.begin(), d_l0.end(), thrust::make_constant_iterator(scale), d_l0.begin(), thrust::divides<double>());
   thrust::transform(d_a0.begin(), d_a0.end(), thrust::make_constant_iterator(scale * scale), d_a0.begin(), thrust::divides<double>());
   // boxSize
@@ -1394,7 +1413,9 @@ void DPM2D::scaleParticlePacking() {
   thrust::transform(d_particlePos.begin(), d_particlePos.end(), thrust::make_constant_iterator(scale), d_particlePos.begin(), thrust::divides<double>());
   // vertex variables
   thrust::transform(d_rad.begin(), d_rad.end(), thrust::make_constant_iterator(scale), d_rad.begin(), thrust::divides<double>());
-  h_rad = d_rad; //HOST
+  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+    h_rad = d_rad; //HOST
+  }
   thrust::transform(d_l0.begin(), d_l0.end(), thrust::make_constant_iterator(scale), d_l0.begin(), thrust::divides<double>());
   thrust::transform(d_a0.begin(), d_a0.end(), thrust::make_constant_iterator(scale * scale), d_a0.begin(), thrust::divides<double>());
   // boxSize
@@ -1413,7 +1434,9 @@ void DPM2D::scaleVertices(double scale) {
   thrust::transform(d_area.begin(), d_area.end(), thrust::make_constant_iterator(scale * scale), d_area.begin(), thrust::multiplies<double>());
   thrust::transform(d_l0.begin(), d_l0.end(), thrust::make_constant_iterator(scale), d_l0.begin(), thrust::multiplies<double>());
   thrust::transform(d_rad.begin(), d_rad.end(), thrust::make_constant_iterator(scale), d_rad.begin(), thrust::multiplies<double>());
-  h_rad = d_rad; //HOST
+  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+    h_rad = d_rad; //HOST
+  }
 }
 
 void DPM2D::scaleParticles(double scale) {
@@ -2828,20 +2851,17 @@ void DPM2D::calcVertexForceTorque() {
 	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
   // torque here is used for angular acceleration
   kernelCalcVertexForceTorque<<<dimGrid, dimBlock>>>(rad, pos, particlePos, force, torque, energy);
-  //cout << "vertex force 0: " << d_force[0] << " " << d_force[1] << " total: " << getTotalForceMagnitude() << endl;
 }
 
 void DPM2D::calcVertexSmoothForceTorque() {
+  thrust::fill(d_force.begin(), d_force.end(), double(0));
   thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
   const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
   const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
   double *force = thrust::raw_pointer_cast(&d_force[0]);
-  double *torque = thrust::raw_pointer_cast(&d_torque[0]);
 	double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
-  // torque here is used for angular acceleration
-  kernelCalcVertexSmoothForceTorque<<<dimGrid, dimBlock>>>(rad, pos, particlePos, force, torque, pEnergy);
-  //cout << "vertex force 0: " << d_force[0] << " " << d_force[1] << " total: " << getTotalForceMagnitude() << endl;
+  kernelCalcVertexSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy);
 }
 
 void DPM2D::calcRigidForceEnergy() {
@@ -2860,28 +2880,41 @@ void DPM2D::calcRigidForceEnergy() {
   }
 }
 
+void DPM2D::calcTorqueAndMomentOfInertia() {
+  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
+	const double *force = thrust::raw_pointer_cast(&d_force[0]);
+  double *torque = thrust::raw_pointer_cast(&d_torque[0]);
+  double *momentOfInertia = thrust::raw_pointer_cast(&d_momentOfInertia[0]);
+  kernelCalcTorqueAndMomentOfInertia<<<dimGrid, dimBlock>>>(pos, particlePos, force, torque, momentOfInertia);
+}
+
 void DPM2D::transferForceToParticles() {
+  calcTorqueAndMomentOfInertia();
   // vertex variables
 	const double *force = thrust::raw_pointer_cast(&d_force[0]);
   const double *torque = thrust::raw_pointer_cast(&d_torque[0]);
 	const double *energy = thrust::raw_pointer_cast(&d_energy[0]);
+  const double *momentOfInertia = thrust::raw_pointer_cast(&d_momentOfInertia[0]);
   // particle variables
 	double *pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
   double *pTorque = thrust::raw_pointer_cast(&d_particleTorque[0]);
   double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
   // sum force and torque over vertices of particle
-  kernelCalcParticleRigidForceEnergy<<<dimGrid, dimBlock>>>(force, torque, energy, pForce, pTorque, pEnergy);
+  kernelCalcParticleRigidForceEnergy<<<dimGrid, dimBlock>>>(force, torque, energy, momentOfInertia, pForce, pTorque, pEnergy);
 }
 
 void DPM2D::transferSmoothForceToParticles() {
+  calcTorqueAndMomentOfInertia();
   // vertex variables
 	const double *force = thrust::raw_pointer_cast(&d_force[0]);
   const double *torque = thrust::raw_pointer_cast(&d_torque[0]);
+  const double *momentOfInertia = thrust::raw_pointer_cast(&d_momentOfInertia[0]);
   // particle variables
 	double *pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
   double *pTorque = thrust::raw_pointer_cast(&d_particleTorque[0]);
   // sum force and torque over vertices of particle
-  kernelCalcParticleSmoothRigidForceEnergy<<<dimGrid, dimBlock>>>(force, torque, pForce, pTorque);
+  kernelCalcParticleSmoothRigidForceEnergy<<<dimGrid, dimBlock>>>(force, torque, momentOfInertia, pForce, pTorque);
 }
 
 void DPM2D::calcStressTensor() {
@@ -3014,9 +3047,11 @@ void DPM2D::calcNeighborList(double cutDistance) {
 		syncNeighborsToDevice();
 		kernelCalcNeighborList<<<dimGrid, dimBlock>>>(pos, rad, cutDistance);
 	}
-  h_neighborList.resize(d_neighborList.size());
-  h_neighborList = d_neighborList;
-  h_maxNeighborList = d_maxNeighborList;
+  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+    h_neighborList.resize(d_neighborList.size());
+    h_neighborList = d_neighborList;
+    h_maxNeighborList = d_maxNeighborList;
+  }
 }
 
 void DPM2D::syncNeighborsToDevice() {

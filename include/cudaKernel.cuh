@@ -1312,69 +1312,27 @@ __global__ void kernelCalcVertexForceTorque(const double* rad, const double* pos
   	}
 }
 
-__global__ void kernelCalcVertexSmoothForceTorque(const double* rad, const double* pos, const double* pPos, double* force, double* torque, double* pEnergy) {
-  	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (vertexId < d_numVertices) {
-		//thread_block block = this_thread_block();
-		auto particleId = d_particleIdListPtr[vertexId];
-    	auto otherRad = 0.0;
-		auto interaction = 0.0;
-		double thisPos[MAXDIM], otherPos[MAXDIM], partPos[MAXDIM], previousPos[MAXDIM], segment[MAXDIM], relSegment[MAXDIM];
-		double secondPreviousPos[MAXDIM], previousSegment[MAXDIM], projPos[MAXDIM];
-		for (long dim = 0; dim < d_nDim; dim++) {
-			force[vertexId * d_nDim + dim] = 0;
-		}
-		torque[vertexId] = 0.0;
-		getVertexPos(vertexId, pos, thisPos);
-    	auto thisRad = rad[vertexId];
-    	// interaction between vertices of neighbor particles
-    	for (long nListId = 0; nListId < d_maxNeighborListPtr[vertexId]; nListId++) {
-      		if(extractNeighbor(vertexId, nListId, pos, rad, otherPos, otherRad)) {
-				auto otherId = d_neighborListPtr[vertexId*d_neighborListSize + nListId];
-				auto radSum = thisRad + otherRad;
-				auto otherParticleId = d_particleIdListPtr[otherId];
-				// compute projection of vertexId on segment between otherId and previousId
-				auto previousId = getPreviousId(otherId, otherParticleId);
-				getVertexPos(previousId, pos, previousPos);
-				getDelta(otherPos, previousPos, segment);
-				getDelta(thisPos, previousPos, relSegment);
-				for (long dim = 0; dim < d_nDim; dim++) {
-					thisPos[dim] = previousPos[dim] + relSegment[dim];
-				}
-				auto length = calcNorm(segment);
-				auto projection = getProjection(thisPos, otherPos, previousPos, length);
-				// check if the interaction is vertex-segment
-				if(projection > 0 && projection <= 1) {
-					getProjectionPos(previousPos, segment, projPos, projection);
-					interaction = calcVertexSegmentInteraction(thisPos, projPos, otherPos, previousPos, length, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim], &force[previousId*d_nDim]);
-					atomicAdd(&pEnergy[particleId], interaction);
-					atomicAdd(&pEnergy[otherParticleId], interaction);
-					//if(interaction!=0) printf("particleId: %ld \t vertexId: %ld \t otherId: %ld \t previousId: %ld \t interaction %lf \n", particleId, vertexId, otherId, previousId, pEnergy[particleId]);
-					//block.sync();
-				} else if(projection <= 0) {
-					auto secondPreviousId = getPreviousId(previousId, otherParticleId);
-					getVertexPos(secondPreviousId, pos, secondPreviousPos);
-					getDelta(secondPreviousPos, previousPos, previousSegment);
-					length = calcNorm(previousSegment);
-					auto previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
-					if(previousProj > 1) {
-						interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
-						atomicAdd(&pEnergy[particleId], interaction);
-						atomicAdd(&pEnergy[otherParticleId], interaction);
-						//if(interaction != 0) printf("particleId: %ld \t vertexId: %ld \t otherId: %ld \t interaction %lf \n", particleId, vertexId, otherId, pEnergy[particleId]);
-						//block.sync();
-					}
-				}
+__global__ void kernelCalcTorqueAndMomentOfInertia(const double* pos, const double* pPos, const double* force, double* torque, double* momentOfInertia) {
+	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
+	if(particleId < d_numParticles) {
+		momentOfInertia[particleId] = 0.0;
+		auto firstVertex = d_firstVertexInParticleIdPtr[particleId];
+		auto lastVertex = firstVertex + d_numVertexInParticleListPtr[particleId];
+		double thisPos[MAXDIM];
+		for (long vertexId = firstVertex; vertexId < lastVertex; vertexId++) {
+			getVertexPos(vertexId, pos, thisPos);
+			getRelativeVertexPos(vertexId, pos, thisPos, &pPos[particleId*d_nDim]);
+			torque[vertexId] = (thisPos[0] * force[vertexId * d_nDim + 1] - thisPos[1] * force[vertexId * d_nDim]);
+			auto distanceSq = 0.0;
+			for (long dim = 0; dim < d_nDim; dim++) {
+				distanceSq += thisPos[dim] * thisPos[dim];
 			}
+			momentOfInertia[particleId] += distanceSq;
 		}
-		getParticlePos(particleId, pPos, partPos);
-		getRelativeVertexPos(vertexId, pos, thisPos, partPos);
-		torque[vertexId] = (thisPos[0] * force[vertexId * d_nDim + 1] - thisPos[1] * force[vertexId * d_nDim]);
-	//__syncthreads();
 	}
 }
 
-__global__ void kernelCalcParticleRigidForceEnergy(const double* force, const double* torque, const double* energy, double* pForce, double* pTorque, double* pEnergy) {
+__global__ void kernelCalcParticleRigidForceEnergy(const double* force, const double* torque, const double* energy, const double* momentOfInertia, double* pForce, double* pTorque, double* pEnergy) {
 	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
 	if(particleId < d_numParticles) {
 		for (long dim = 0; dim < d_nDim; dim++) {
@@ -1386,15 +1344,17 @@ __global__ void kernelCalcParticleRigidForceEnergy(const double* force, const do
 		auto lastVertex = firstVertex + d_numVertexInParticleListPtr[particleId];
 		for (long vertexId = firstVertex; vertexId < lastVertex; vertexId++) {
 			for (long dim = 0; dim < d_nDim; dim++) {
+				
 				pForce[particleId * d_nDim + dim] += force[vertexId * d_nDim + dim];
 			}
 			pTorque[particleId] += torque[vertexId];
 			pEnergy[particleId] += energy[vertexId];
 		}
+		pTorque[particleId] /= momentOfInertia[particleId];
 	}
 }
 
-__global__ void kernelCalcParticleSmoothRigidForceEnergy(const double* force, const double* torque, double* pForce, double* pTorque) {
+__global__ void kernelCalcParticleSmoothRigidForceEnergy(const double* force, const double* torque, const double* momentOfInertia, double* pForce, double* pTorque) {
 	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
 	if(particleId < d_numParticles) {
 		for (long dim = 0; dim < d_nDim; dim++) {
@@ -1409,6 +1369,7 @@ __global__ void kernelCalcParticleSmoothRigidForceEnergy(const double* force, co
 			}
 			pTorque[particleId] += torque[vertexId];
 		}
+		pTorque[particleId] /= momentOfInertia[particleId];
 	}
 }
 

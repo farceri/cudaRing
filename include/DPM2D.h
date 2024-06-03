@@ -138,6 +138,7 @@ public:
   thrust::device_vector<double> d_particleInitAngle;
   thrust::device_vector<double> d_particleLastAngle;
 	thrust::device_vector<double> d_particleDeltaAngle;
+	thrust::device_vector<double> d_momentOfInertia;
 
   // stress
   thrust::device_vector<double> d_stress;
@@ -195,6 +196,8 @@ public:
   void initNeighbors(long numVertices_);
 
   void initSmoothNeighbors(long numVertices_);
+
+  void initHostVariables(long numVertices_, long numParticles_);
 
   double initCells(long numVertices_, double cellSize_);
 
@@ -553,6 +556,8 @@ public:
   void transferForceToParticles();
 
   void calcVertexSmoothForceTorque();
+
+  void calcTorqueAndMomentOfInertia();
 
   void transferSmoothForceToParticles();
 

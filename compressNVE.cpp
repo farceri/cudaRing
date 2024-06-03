@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
     cout << "Energy before compression - E/N: " << prevEnergy / numVertices << endl;
     // save minimized configuration
     ioDPM.savePacking(currentDir);
-    ioDPM.saveNeighbors(currentDir);
+    //ioDPM.saveNeighbors(currentDir);
     ioDPM.closeEnergyFile();
     // check if target density is met
     if(currentPhi >= phiTh) {
