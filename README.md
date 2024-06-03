@@ -11,4 +11,5 @@ Current version includes:
 
 Please contact me at arceri.fra at gmail.com for more info
 
+Example of deformable particles in NVE dynamics with monomer-monomer and monomer-segment interactions (color-labeled by particle size)
 ![N128-smooth-T0 10-eb10](https://github.com/farceri/cudaRing/assets/32315176/688479ff-cf96-43fd-81a3-08570ebc0876)
