@@ -23,7 +23,7 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool readAndMakeNewDir = false, readAndSaveSameDir = true, runDynamics = true;
+  bool readAndMakeNewDir = false, readAndSaveSameDir = false, runDynamics = false;
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
@@ -40,8 +40,6 @@ int main(int argc, char **argv) {
   dpm.setSimulationType(simControlStruct::simulationEnum::gpu);
   dpm.setPotentialType(simControlStruct::potentialEnum::wca);
   dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
-  dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
-  dpm.setConcavityType(simControlStruct::concavityEnum::off);
   ioDPMFile ioDPM(&dpm);
   // set input and output
   if (readAndSaveSameDir == true) {//keep running the same dynamics
@@ -49,7 +47,7 @@ int main(int argc, char **argv) {
     inDir = inDir + dirSample;
     outDir = inDir;
     if(runDynamics == true) {
-      outDir = outDir + "dynamics-gpu/";
+      outDir = outDir + "dynamics/";
       if(std::experimental::filesystem::exists(outDir) == true) {
         inDir = outDir;
       } else {
@@ -86,11 +84,7 @@ int main(int argc, char **argv) {
   dpm.initNVE(Tinject, readState);
   size = 2 * dpm.getMeanVertexRadius();
   cutDistance = dpm.setDisplacementCutoff(cutoff, size);
-  if(dpm.simControl.neighborType == simControlStruct::neighborEnum::neighbor) {
-    dpm.calcNeighborList(cutDistance);
-  } else if(dpm.simControl.neighborType == simControlStruct::neighborEnum::cell) {
-    dpm.fillLinkedList();
-  }
+  dpm.calcNeighbors(cutDistance);
   dpm.calcForceEnergy();
   dpm.resetUpdateCount();
   waveQ = dpm.getDeformableWaveNumber();

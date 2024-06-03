@@ -23,9 +23,8 @@ struct simControlStruct {
   enum class simulationEnum {gpu, cpu, omp} simulationType;
   enum class particleEnum {deformable, rigid} particleType;
   enum class potentialEnum {harmonic, lennardJones, adhesive, wca} potentialType;
-  enum class interactionEnum {vertexVertex, cellSmooth, vertexSmooth, all} interactionType;
+  enum class interactionEnum {vertexVertex, vertexSmooth, cellSmooth, all} interactionType;
   enum class neighborEnum {neighbor, cell, allToAll} neighborType;
-  enum class concavityEnum {on, off} concavityType;
   enum class monomerEnum {harmonic, FENE} monomerType;
 };
 
@@ -53,8 +52,6 @@ public:
 
   // variables for CUDA runtime details
   long dimGrid, dimBlock, partDimGrid;
-  dim3 cellDimBlock;
-  dim3 cellDimGrid;
 
   // dpm packing constants
   long nDim;
@@ -161,9 +158,6 @@ public:
   thrust::host_vector<long> h_header;
   thrust::host_vector<long> h_linkedList;
   thrust::host_vector<long> h_cellIndexList;
-  thrust::device_vector<long> d_header;
-  thrust::device_vector<long> d_linkedList;
-  thrust::device_vector<long> d_cellIndexList;
   double cellSize;
   long numCells;
   long maxCellNeighbors;
@@ -224,16 +218,11 @@ public:
   void setNeighborType(simControlStruct::neighborEnum interactionType_);
 	simControlStruct::neighborEnum getNeighborType();
 
-  void setConcavityType(simControlStruct::concavityEnum concavityType_);
-	simControlStruct::concavityEnum getConcavityType();
-
   void setMonomerType(simControlStruct::monomerEnum monomerType_);
 	simControlStruct::monomerEnum getMonomerType();
 
   void setDimBlock(long dimBlock_);
   long getDimBlock();
-
-  void setCellDimGridBlock();
 
   void setNDim(long nDim_);
   long getNDim();

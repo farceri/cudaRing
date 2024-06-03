@@ -59,13 +59,13 @@ INC_DIR = include
 # make packings
 #EXE = makeDPM
 #EXE = compressFIRE
-EXE = compressNVE
+#EXE = compressNVE
 #EXE = compressNVT
 #EXE = compressRigidFIRE
 #EXE = compressRigidNVT
 
 # run dynamics
-#EXE = runNVE
+EXE = runNVE
 #EXE = runNVT
 #EXE = runActive
 #EXE = runActivePlastic
