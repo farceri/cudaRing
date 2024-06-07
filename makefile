@@ -54,7 +54,7 @@ INC_DIR = include
 # Target executable name:
 
 #EXE = testDPM
-#EXE = testInteraction
+EXE = testInteraction
 
 # make packings
 #EXE = makeDPM
@@ -65,7 +65,7 @@ INC_DIR = include
 #EXE = compressRigidNVT
 
 # run dynamics
-EXE = runNVE
+#EXE = runNVE
 #EXE = runNVT
 #EXE = runActive
 #EXE = runActivePlastic

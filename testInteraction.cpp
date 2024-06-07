@@ -21,30 +21,34 @@ using namespace std;
 using std::cout;
 
 int main(int argc, char **argv) {
-  bool read = false, readState = false, saveFinal = false, linSave = true;
-  bool lj = false, wca = false, alltoall = false, cell = false, rigid = false;
+  bool read = false, readState = false, saveFinal = false, linSave = true, shortTest = false;
+  bool lj = true, wca = false, alltoall = false, cell = false, rigid = false;
   long step = 0, numParticles = 2, nDim = 2, numVertexPerParticle = 20, maxStep = atof(argv[3]), updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
-  double LJcutoff = 4, cutoff = 0.5, cutDistance, timeStep = atof(argv[2]), sigma, timeUnit, size;
+  double LJcutoff = 1.5, cutoff = 0.5, cutDistance, timeStep = atof(argv[2]), sigma, timeUnit, size;
   double sigma0 = 1, lx = 2.8, ly = 2.8, vel1 = 2e-01, y0 = 0.28, y1 = 0.65, epot, ekin;
-  double ea = 1e05, el = 20, eb = 0, ec = 1;
+  double ea = 1e05, el = 20, eb = 10, ec = 1;
   std::string outDir, energyFile, inDir = argv[1], currentDir, dirSample;
+  if(shortTest == true) {
+    linFreq = checkPointFreq;
+    saveEnergyFreq = checkPointFreq;
+  }
   // initialize sp object
 	DPM2D dp(numParticles, nDim, numVertexPerParticle);
-  dirSample = "harmonic-smooth-gpu-eb0/";
+  dirSample = "lj-smooth-cpu-eb10/";
   dp.printDeviceProperties();
   long numVertices = dp.getNumVertices();
-  dp.setSimulationType(simControlStruct::simulationEnum::gpu);
+  dp.setSimulationType(simControlStruct::simulationEnum::cpu);
   if(rigid == true) {
     dp.setParticleType(simControlStruct::particleEnum::deformable);
   }
   dp.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
-  dp.setConcavityType(simControlStruct::concavityEnum::off);
   dp.setEnergyCosts(ea, el, eb, ec);
   if(lj == true) {
     dp.setPotentialType(simControlStruct::potentialEnum::lennardJones);
     cout << "Setting Lennard-Jones potential" << endl;
     dp.setLJcutoff(LJcutoff);
+    y1 = 0.69;
   } else if(wca == true) {
     dp.setPotentialType(simControlStruct::potentialEnum::wca);
     cout << "Setting WCA potential" << endl;
@@ -105,12 +109,16 @@ int main(int argc, char **argv) {
   ioDPM.savePacking(outDir);
   ioDPM.saveNeighbors(outDir);
   while(step != maxStep) {
-    //cout << "STEP: " << step << endl;
+    if(shortTest == true) {
+      cout << "\nNVE: current step: " << step << endl;
+    }
     dp.testInteraction(timeStep);
     if(step % saveEnergyFreq == 0) {
       ioDPM.saveEnergy(step, timeStep, numParticles, numVertices);
       if(step % checkPointFreq == 0) {
+        if(shortTest == false) {
         cout << "NVE: current step: " << step;
+        }
         if(rigid == true) {
           epot = dp.getParticlePotentialEnergy();
           ekin = dp.getRigidKineticEnergy();
@@ -121,6 +129,9 @@ int main(int argc, char **argv) {
         cout << " U: " << epot;
         cout << " K: " << ekin;
         cout << " Energy: " << epot + ekin;
+        if(shortTest == true) {
+          cout << endl;
+        }
         if(dp.simControl.neighborType == simControlStruct::neighborEnum::neighbor) {
           updateCount = dp.getUpdateCount();
           if(step != 0 && updateCount > 0) {

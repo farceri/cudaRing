@@ -414,8 +414,14 @@ public:
     thrust::host_vector<double> particleAngle_(numParticles_);
     vel_ = read2DFile(dirName + "velocities.dat", numVertices_);
     dpm_->setVertexVelocities(vel_);
-    particlePos_ = read2DFile(dirName + "particlePos.dat", numParticles_);
-    dpm_->setParticlePositions(particlePos_);
+  }
+
+  void readDeformableActiveState(string dirName, long numParticles_, long numVertices_, long nDim_) {
+    thrust::host_vector<double> vel_(numVertices_ * nDim_);
+    thrust::host_vector<double> particlePos_(numParticles_ * nDim_);
+    thrust::host_vector<double> particleAngle_(numParticles_);
+    vel_ = read2DFile(dirName + "velocities.dat", numVertices_);
+    dpm_->setVertexVelocities(vel_);
     particleAngle_ = read1DFile(dirName + "particleAngles.dat", numParticles_);
     dpm_->setParticleAngles(particleAngle_);
   }
@@ -441,15 +447,18 @@ public:
   void saveDeformableState(string dirName) {
     save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
-    save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
-    save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
+  }
+
+  void saveDeformableActiveState(string dirName) {
+    save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
+    save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
     save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
   }
 
   void saveRigidState(string dirName) {
     save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
-    save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
+    //save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
     save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
     save2DFile(dirName + "particleVel.dat", dpm_->getParticleVelocities(), dpm_->nDim);
     save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());

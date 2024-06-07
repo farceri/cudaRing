@@ -259,7 +259,7 @@ void DPM2D::initParticleIdList() {
 
   long* particleIdList = thrust::raw_pointer_cast(&d_particleIdList[0]);
   cudaMemcpyToSymbol(d_particleIdListPtr, &particleIdList, sizeof(particleIdList));
-  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+  if(simControl.simulationType == simControlStruct::simulationEnum::cpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
     h_particleIdList = d_particleIdList; //HOST
   }
 }
@@ -278,10 +278,10 @@ void DPM2D::syncSimControlFromDevice() {
 void DPM2D::setSimulationType(simControlStruct::simulationEnum simulationType_) {
 	simControl.simulationType = simulationType_;
   if(simControl.simulationType == simControlStruct::simulationEnum::gpu) {
-    initHostVariables(numVertices, numParticles);
     cout << "DPM2D::setSimulationType: simulationType: gpu" << endl;
   } else if(simControl.simulationType == simControlStruct::simulationEnum::cpu) {
     cout << "DPM2D::setSimulationType: simulationType: cpu" << endl;
+    initHostVariables(numVertices, numParticles);
   } else if(simControl.simulationType == simControlStruct::simulationEnum::omp) {
     initHostVariables(numVertices, numParticles);
     cout << "DPM2D::setSimulationType: simulationType: omp" << endl;
@@ -491,7 +491,7 @@ void DPM2D::setBoxSize(thrust::host_vector<double> &boxSize_) {
     d_boxSize = boxSize_;
     double* boxSize = thrust::raw_pointer_cast(&(d_boxSize[0]));
     cudaMemcpyToSymbol(d_boxSizePtr, &boxSize, sizeof(boxSize));
-    if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+    if(simControl.simulationType == simControlStruct::simulationEnum::cpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
       h_boxSize = d_boxSize; //HOST
     }
   } else {
@@ -513,7 +513,7 @@ thrust::host_vector<double> DPM2D::getBoxSize() {
 //**************************** shape variables *******************************//
 void DPM2D::setVertexRadii(thrust::host_vector<double> &rad_) {
   d_rad = rad_;
-  if(getSimulationType() == simControlStruct::simulationEnum::omp || getSimulationType() == simControlStruct::simulationEnum::cpu) {
+  if(getSimulationType() == simControlStruct::simulationEnum::cpu || getSimulationType() == simControlStruct::simulationEnum::omp) {
     cout << "DPM2D::setVertexRadii:: initialized positions on host" << endl;
     h_rad = d_rad; //HOST
   }
@@ -725,7 +725,7 @@ thrust::host_vector<double> DPM2D::getParticleTorques() {
 //************************** dynamical variables *****************************//
 void DPM2D::setVertexPositions(thrust::host_vector<double> &pos_) {
   d_pos = pos_;
-  if(getSimulationType() == simControlStruct::simulationEnum::omp || getSimulationType() == simControlStruct::simulationEnum::cpu) {
+  if(getSimulationType() == simControlStruct::simulationEnum::cpu || getSimulationType() == simControlStruct::simulationEnum::omp) {
     cout << "DPM2D::setVertexPositions:: initialized positions on host" << endl;
     h_pos = d_pos; //HOST
   }
@@ -922,7 +922,6 @@ void  DPM2D::adjustKineticEnergy(double prevEtot) {
   deltaEtot -= prevEtot;
   if(ekin > deltaEtot) {
     scale = sqrt((ekin - deltaEtot) / ekin);
-    //cout << "deltaEtot: " << deltaEtot << " ekin - deltaEtot: " << ekin - deltaEtot << " scale: " << scale << endl;
     long s_nDim(nDim);
     auto r = thrust::counting_iterator<long>(0);
     double* vel = thrust::raw_pointer_cast(&d_vel[0]);
@@ -939,6 +938,23 @@ void  DPM2D::adjustKineticEnergy(double prevEtot) {
   } else {
     cout << "DPM2D::adjustKineticEnergy:: kinetic energy is less then change in total energy - no adjustment is made" << endl;
   }
+}
+
+void DPM2D::adjustTemperature(double targetTemp) {
+  double scale = sqrt(targetTemp / getTemperature());
+  long s_nDim(nDim);
+  auto r = thrust::counting_iterator<long>(0);
+  double* vel = thrust::raw_pointer_cast(&d_vel[0]);
+
+  auto adjustVertexTemp = [=] __device__ (long vId) {
+    #pragma unroll (MAXDIM)
+    for (long dim = 0; dim < s_nDim; dim++) {
+      vel[vId * s_nDim + dim] *= scale;
+    }
+  };
+
+  //cout << "SP2D::adjustTemperature:: scale: " << scale << endl;
+  thrust::for_each(r, r + numVertices, adjustVertexTemp);
 }
 
 double DPM2D::getPhi() {
@@ -1195,7 +1211,7 @@ void DPM2D::setMonoSizeDistribution() {
   		d_rad[d_firstVertexInParticleId[particleId] + vertexId] = 0.5 * d_l0[d_firstVertexInParticleId[particleId] + vertexId];
     }
   }
-  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+  if(simControl.simulationType == simControlStruct::simulationEnum::cpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
     h_rad = d_rad; //HOST
   }
 }
@@ -1245,7 +1261,7 @@ void DPM2D::setPolySizeDistribution(double calA0_, double polyDispersity) {
       //cout << "vertexId: " << d_firstVertexInParticleId[particleId] + vertexId << " l0: " << d_l0[d_firstVertexInParticleId[particleId] + vertexId] << " rad: " << d_rad[d_firstVertexInParticleId[particleId] + vertexId] << endl;
     }
   }
-  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+  if(simControl.simulationType == simControlStruct::simulationEnum::cpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
     h_rad = d_rad; //HOST
   }
 }
@@ -1283,7 +1299,7 @@ void DPM2D::setRandomParticles(double phi0, double extraRad_) {
     d_l0[vertexId] /= scale;
     d_rad[vertexId] /= scale;
   }
-  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+  if(simControl.simulationType == simControlStruct::simulationEnum::cpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
     h_rad = d_rad; //HOST
   }
   // need to set this otherwise forces are zeros
@@ -1351,7 +1367,7 @@ void DPM2D::scalePacking(double scale) {
   // vertex variables
   thrust::transform(d_pos.begin(), d_pos.end(), thrust::make_constant_iterator(scale), d_pos.begin(), thrust::divides<double>());
   thrust::transform(d_rad.begin(), d_rad.end(), thrust::make_constant_iterator(scale), d_rad.begin(), thrust::divides<double>());
-  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+  if(simControl.simulationType == simControlStruct::simulationEnum::cpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
     h_rad = d_rad; //HOST
   }
   thrust::transform(d_l0.begin(), d_l0.end(), thrust::make_constant_iterator(scale), d_l0.begin(), thrust::divides<double>());
@@ -1373,7 +1389,7 @@ void DPM2D::scaleParticlePacking() {
   thrust::transform(d_particlePos.begin(), d_particlePos.end(), thrust::make_constant_iterator(scale), d_particlePos.begin(), thrust::divides<double>());
   // vertex variables
   thrust::transform(d_rad.begin(), d_rad.end(), thrust::make_constant_iterator(scale), d_rad.begin(), thrust::divides<double>());
-  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+  if(simControl.simulationType == simControlStruct::simulationEnum::cpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
     h_rad = d_rad; //HOST
   }
   thrust::transform(d_l0.begin(), d_l0.end(), thrust::make_constant_iterator(scale), d_l0.begin(), thrust::divides<double>());
@@ -1394,7 +1410,7 @@ void DPM2D::scaleVertices(double scale) {
   thrust::transform(d_area.begin(), d_area.end(), thrust::make_constant_iterator(scale * scale), d_area.begin(), thrust::multiplies<double>());
   thrust::transform(d_l0.begin(), d_l0.end(), thrust::make_constant_iterator(scale), d_l0.begin(), thrust::multiplies<double>());
   thrust::transform(d_rad.begin(), d_rad.end(), thrust::make_constant_iterator(scale), d_rad.begin(), thrust::multiplies<double>());
-  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+  if(simControl.simulationType == simControlStruct::simulationEnum::cpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
     h_rad = d_rad; //HOST
   }
 }
@@ -1482,9 +1498,12 @@ void DPM2D::setAttractionConstants(double l1_, double l2_) {
 void DPM2D::setLJcutoff(double LJcutoff_) {
   LJcutoff = LJcutoff_;
   cudaMemcpyToSymbol(d_LJcutoff, &LJcutoff, sizeof(LJcutoff));
-  LJecut = 4 * (1 / pow(LJcutoff, 12) - 1 / pow(LJcutoff, 6));
+  double ratio6 = 1 / pow(LJcutoff, 6);
+  LJecut = 4 * ec * (ratio6 * ratio6 - ratio6);
   cudaMemcpyToSymbol(d_LJecut, &LJecut, sizeof(LJecut));
-  //cout << "DPM2D::setLJcutoff - LJcutoff: " << LJcutoff << " LJecut: " << LJecut << endl;
+	LJfshift = 24 * ec * (2 * ratio6 - 1) * ratio6 / LJcutoff;
+  cudaMemcpyToSymbol(d_LJfshift, &LJfshift, sizeof(LJfshift));
+  cout << "DPM2D::setLJcutoff::LJcutoff: " << LJcutoff << " energy shift: " << LJecut << " LJfshift: " << LJfshift << endl;
 }
 
 void DPM2D::setFENEconstants(double stiff_, double ext_) {
@@ -1595,111 +1614,10 @@ void DPM2D::secondUpdate(double timeStep) {
   //thrust::for_each(r, r + numVertices, firstUpdate);
 }
 
-void DPM2D::pinDeformableParticle(long pId) {
-  // pin particle to initial vertex positions with a strong attractive spring
-  long s_nDim(nDim);
-  auto r = thrust::counting_iterator<long>(0);
-	const double* boxSize = thrust::raw_pointer_cast(&d_boxSize[0]);
-	const double* initialPos = thrust::raw_pointer_cast(&d_initialPos[0]);
-	const double* pos = thrust::raw_pointer_cast(&d_pos[0]);
-	double* force = thrust::raw_pointer_cast(&d_force[0]);
-	double* energy = thrust::raw_pointer_cast(&d_energy[0]);
-
-  auto pinVertex = [=] __device__ (long vId) {
-    auto distanceSq = 0.0;
-    double delta[MAXDIM];
-    #pragma unroll (MAXDIM)
-		for (long dim = 0; dim < s_nDim; dim++) {
-      delta[dim] = pos[vId * s_nDim + dim] - initialPos[vId * s_nDim + dim];
-	    delta[dim] -= boxSize[dim] * round(delta[dim] / boxSize[dim]);
-      distanceSq += delta[dim] * delta[dim];
-    }
-    auto distance = sqrt(distanceSq);
-    if(distance > 0.0) {
-      auto gradMultiple = d_ec * distance;
-      #pragma unroll (MAXDIM)
-      for (long dim = 0; dim < s_nDim; dim++) {
-        force[vId * s_nDim + dim] += gradMultiple * delta[dim] / distance;
-      }
-      energy[vId] -= 0.5 * d_ec * distanceSq;
-    }
-  };
-
-  auto firstVertex = d_firstVertexInParticleId[pId];
-	auto lastVertex = firstVertex + d_numVertexInParticleList[pId];
-  thrust::for_each(r + firstVertex, r + lastVertex, pinVertex);
-}
-
-void DPM2D::addTangentialForce(long pId) {
-  // compute center of mass of particle 1
-  double com[MAXDIM] = {0.0,0.0};
-  for (long vId = d_firstVertexInParticleId[1]; vId < d_numVertexInParticleList[1]; vId++) {
-    for (long dim = 0; dim < nDim; dim++) {
-      com[dim] += d_pos[vId * nDim + dim];
-    }
-  }
-  for (long dim = 0; dim < nDim; dim++) {
-    com[dim] /= d_numVertexInParticleList[1];
-  }
-  // add velocity to particle 0 towards center of mass of particle 1
-  long s_nDim(nDim);
-  auto r = thrust::counting_iterator<long>(0);
-	const double* boxSize = thrust::raw_pointer_cast(&d_boxSize[0]);
-	const double* pos = thrust::raw_pointer_cast(&d_pos[0]);
-	double* force = thrust::raw_pointer_cast(&d_force[0]);
-	double* energy = thrust::raw_pointer_cast(&d_energy[0]);
-
-  auto addTangentialForceToVertex = [=] __device__ (long vId) {
-    auto distanceSq = 0.0;
-    double delta[MAXDIM];
-    #pragma unroll (MAXDIM)
-		for (long dim = 0; dim < s_nDim; dim++) {
-      delta[dim] = com[dim] - pos[vId * s_nDim + dim];
-	    delta[dim] -= boxSize[dim] * round(delta[dim] / boxSize[dim]);
-      distanceSq += delta[dim] * delta[dim];
-    }
-    auto distance = sqrt(distanceSq);
-    for (long dim = 0; dim < s_nDim; dim++) {
-      delta[dim] /= distance;
-    }
-    double tangent[MAXDIM];
-    tangent[0] = -delta[1];
-    tangent[1] = delta[0];
-    auto ratio = 1 / distance;
-    auto gradMultiple = 24 * d_el * (-pow(ratio,6)) / distance;
-    #pragma unroll (MAXDIM)
-    for (long dim = 0; dim < s_nDim; dim++) {
-      force[vId * s_nDim + dim] += d_el * tangent[dim];
-      force[vId * s_nDim + dim] += gradMultiple * delta[dim];
-    }
-    energy[vId] += 4 * d_el * (-pow(ratio,6));
-  };
-
-  auto firstVertex = d_firstVertexInParticleId[pId];
-	auto lastVertex = firstVertex + d_numVertexInParticleList[pId];
-  thrust::for_each(r + firstVertex, r + lastVertex, addTangentialForceToVertex);
-}
-
-void DPM2D::addForce(long pId) {
-  long s_nDim(nDim);
-  auto r = thrust::counting_iterator<long>(0);
-	double* force = thrust::raw_pointer_cast(&d_force[0]);
-
-  auto addForceToVertex = [=] __device__ (long vId) {
-    force[vId * s_nDim] += 0.1;
-  };
-
-  auto firstVertex = d_firstVertexInParticleId[pId];
-	auto lastVertex = firstVertex + d_numVertexInParticleList[pId];
-  thrust::for_each(r + firstVertex, r + lastVertex, addForceToVertex);
-}
-
 void DPM2D::testDeformableInteraction(double timeStep) {
   firstUpdate(timeStep);
   checkNeighbors();
   calcForceEnergy();
-  //addTangentialForce(0);
-  //pinDeformableParticle(1);
   secondUpdate(timeStep);
 }
 
@@ -2211,8 +2129,8 @@ void DPM2D::calcSmoothInteraction() {
   thrust::fill(h_interaction.begin(), h_interaction.end(), double(0));
   for (long vertexId = 0; vertexId < numVertices; vertexId++) {
     double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
-    double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM];//, interSegment[MAXDIM], previousSegment[MAXDIM];// relSegment[MAXDIM], relPos[MAXDIM];
-    double distance, gradMultiple, overlap, ratio, ratio6, ratio12, epot;
+    double delta[MAXDIM], segment[MAXDIM], projPos[MAXDIM];
+    double distance, gradMultiple, overlap, ratio, ratio6, ratio12, forceShift, epot;
     long particleId = d_particleIdList[vertexId];
     for (long dim = 0; dim < nDim; dim++) {
       thisPos[dim] = h_pos[vertexId * nDim + dim];
@@ -2239,15 +2157,8 @@ void DPM2D::calcSmoothInteraction() {
           distanceSq += segment[dim] * segment[dim];
         }
         double length = sqrt(distanceSq);
-        // this takes into account periodic boundaries with respect to the segment
-        //for (long dim = 0; dim < nDim; dim++) {
-        //  relSegment[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
-        //  thisPos[dim] = previousPos[dim] + relSegment[dim];
-        //}
         // compute projection on the line between other and previous
         double projection = (pbcDistance(thisPos[0], previousPos[0], h_boxSize[0]) * pbcDistance(otherPos[0], previousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], previousPos[1], h_boxSize[1]) * pbcDistance(otherPos[1], previousPos[1], h_boxSize[1])) / (length * length);
-        //double projection = getProjection(thisPos, otherPos, previousPos, length);
-        //cout << "projection: " << projection << " length: " << length << endl;
         // check if previous vertex is interacting with this vertex through a segment
         long secondPreviousId = getPreviousId(previousId, otherParticleId);
         distanceSq = 0;
@@ -2257,12 +2168,7 @@ void DPM2D::calcSmoothInteraction() {
           distanceSq += delta[dim] * delta[dim];
         }
         double previousLength = sqrt(distanceSq);
-        //for (long dim = 0; dim < nDim; dim++) {
-        //  relSegment[dim] = pbcDistance(thisPos[dim], secondPreviousPos[dim], h_boxSize[dim]);
-        //  relPos[dim] = secondPreviousPos[dim] + relSegment[dim];
-        //}
         double previousProj = (pbcDistance(thisPos[0], secondPreviousPos[0], h_boxSize[0]) * pbcDistance(previousPos[0], secondPreviousPos[0], h_boxSize[0]) + pbcDistance(thisPos[1], secondPreviousPos[1], h_boxSize[1]) * pbcDistance(previousPos[1], secondPreviousPos[1], h_boxSize[1])) / (previousLength * previousLength);
-        //double previousProj = getProjection(thisPos, previousPos, secondPreviousPos, length);
         bool isPreviousVertexSegment = false;
         if(projection >= 0 && projection < 1) {
           double reducedProj = max(0.0, min(1.0, projection));
@@ -2295,11 +2201,21 @@ void DPM2D::calcSmoothInteraction() {
               epot = 0.5 * ec * (4 * (ratio12 - ratio6) + 1);
             }
             break;
+            case simControlStruct::potentialEnum::lennardJones:
+            if(distance <= (LJcutoff * radSum)) {
+              addForce = true;
+              ratio = radSum / distance;
+              ratio6 = pow(ratio, 6);
+              ratio12 = ratio6 * ratio6;
+		          forceShift =  LJfshift / radSum;
+              gradMultiple = 4 * ec * (12 * ratio12 - 6 * ratio6) / distance - forceShift;
+              epot = 0.5 * ec * (4 * (ratio12 - ratio6) - LJecut - abs(forceShift) * (distance - LJcutoff * radSum));
+            }
+            break;
           }
           if(addForce == true) {
-            //cout << vertexId << " vertex-segment interacton with " << otherId << " " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
+            //if(vertexId == 36 || vertexId == 7) cout << vertexId << " vertex-segment interacton with " << otherId << " " << previousId << " projection: " << projection << " force: " << gradMultiple << endl;
             double cross = pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - pbcDistance(otherPos[0], thisPos[0], h_boxSize[0]) * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]);
-            //double cross = calcCross(thisPos, otherPos, previousPos);
             double absCross = fabs(cross);
             double sign = absCross / cross;
             // this vertex
@@ -2324,7 +2240,8 @@ void DPM2D::calcSmoothInteraction() {
             h_interaction[previousId * nDim] += gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], h_boxSize[1]) - absCross * pbcDistance(previousPos[0], otherPos[0], h_boxSize[0]) / (length * length)) / length;
             h_interaction[previousId * nDim + 1] += gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], h_boxSize[0]) - absCross * pbcDistance(previousPos[1], otherPos[1], h_boxSize[1]) / (length * length)) / length;
           }
-          if(previousProj >= 0 && previousProj < 1) { // this vertex is interacting with the previous segment - this happens for concave particles
+          if(previousProj >= 0 && previousProj < 1) {
+            // this vertex is interacting with the previous segment - this happens for concave particles
             isPreviousVertexSegment = true;
             distanceSq = 0;
             for (long dim = 0; dim < nDim; dim++) {
@@ -2352,10 +2269,20 @@ void DPM2D::calcSmoothInteraction() {
                 epot = 0.5 * ec * (4 * (ratio12 - ratio6) + 1);
               }
               break;
+              case simControlStruct::potentialEnum::lennardJones:
+              if(distance <= (LJcutoff * radSum)) {
+                addForce = true;
+                ratio = radSum / distance;
+                ratio6 = pow(ratio, 6);
+                ratio12 = ratio6 * ratio6;
+                forceShift =  LJfshift / radSum;
+                gradMultiple = 4 * ec * (12 * ratio12 - 6 * ratio6) / distance - forceShift;
+                epot = 0.5 * ec * (4 * (ratio12 - ratio6) - LJecut - abs(forceShift) * (distance - LJcutoff * radSum));
+              }
+              break;
             }
             if(addForce == true) {
-            //cout << vertexId << " inverse vertex-vertex interacton with " << previousId << " projection: " << projection << " previousProj: " << previousProj << " force: " << gradMultiple << endl;
-            //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
+            //if(vertexId == 36 || vertexId == 7) cout << vertexId << " inverse vertex-vertex interacton with " << previousId << " projection: " << projection << " previousProj: " << previousProj << " force: " << gradMultiple << endl;
               for (long dim = 0; dim < nDim; dim++) {
                 h_force[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
                 h_force[previousId * nDim + dim] -= gradMultiple * delta[dim] / distance;
@@ -2367,7 +2294,8 @@ void DPM2D::calcSmoothInteraction() {
             }
           }
         } else if(projection < 0) {
-          if(previousProj >= 1 && isPreviousVertexSegment == false) { // compute vertex-vertex interaction between this and previous if the particle is convex
+          if(previousProj >= 1 && isPreviousVertexSegment == false) {
+            // compute vertex-vertex interaction between this and previous if the particle is convex
             distanceSq = 0;
             for (long dim = 0; dim < nDim; dim++) {
               delta[dim] = pbcDistance(thisPos[dim], previousPos[dim], h_boxSize[dim]);
@@ -2394,10 +2322,20 @@ void DPM2D::calcSmoothInteraction() {
                 epot = 0.5 * ec * (4 * (ratio12 - ratio6) + 1);
               }
               break;
+              case simControlStruct::potentialEnum::lennardJones:
+              if(distance <= (LJcutoff * radSum)) {
+                addForce = true;
+                ratio = radSum / distance;
+                ratio6 = pow(ratio, 6);
+                ratio12 = ratio6 * ratio6;
+                forceShift =  LJfshift / radSum;
+                gradMultiple = 4 * ec * (12 * ratio12 - 6 * ratio6) / distance - forceShift;
+                epot = 0.5 * ec * (4 * (ratio12 - ratio6) - LJecut - abs(forceShift) * (distance - LJcutoff * radSum));
+              }
+              break;
             }
             if(addForce == true) {
-            //cout << vertexId << " vertex-vertex interacton with " << previousId << " projection: " << projection << " previousProj: " << previousProj << " force: " << gradMultiple << endl;
-            //cout << "PREVIOUS: checking vertexId: " << vertexId << " and previousId: " << previousId << endl;
+            //if(vertexId == 36 || vertexId == 7) cout << vertexId << " vertex-vertex interacton with " << previousId << " projection: " << projection << " previousProj: " << previousProj << " force: " << gradMultiple << endl;
               for (long dim = 0; dim < nDim; dim++) {
                 h_force[vertexId * nDim + dim] += gradMultiple * delta[dim] / distance;
                 h_force[previousId * nDim + dim] -= gradMultiple * delta[dim] / distance;
@@ -3052,7 +2990,7 @@ void DPM2D::calcNeighborList(double cutDistance) {
 		syncNeighborsToDevice();
 		kernelCalcNeighborList<<<dimGrid, dimBlock>>>(pos, rad, cutDistance);
 	}
-  if(simControl.simulationType == simControlStruct::simulationEnum::gpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
+  if(simControl.simulationType == simControlStruct::simulationEnum::cpu || simControl.simulationType == simControlStruct::simulationEnum::omp) {
     h_neighborList.resize(d_neighborList.size());
     h_neighborList = d_neighborList;
     h_maxNeighborList = d_maxNeighborList;

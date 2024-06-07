@@ -82,7 +82,7 @@ public:
   // attraction constants
   double l1, l2;
   // Lennard-Jones constants
-  double LJcutoff, LJecut;
+  double LJcutoff, LJecut, LJfshift;
   // FENE constants
   double stiff, extSq;
   // neighbor variables
@@ -374,6 +374,8 @@ public:
 
   void adjustKineticEnergy(double prevEtot);
 
+  void adjustTemperature(double targetTemp);
+
   double getPhi();
 
   double getPreferredPhi();
@@ -479,12 +481,6 @@ public:
   void firstUpdate(double timeStep);
 
   void secondUpdate(double timeStep);
-
-  void pinDeformableParticle(long pId);
-
-  void addTangentialForce(long pId);
-
-  void addForce(long pId);
 
   void testDeformableInteraction(double timeStep);
 

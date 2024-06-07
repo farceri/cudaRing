@@ -42,6 +42,7 @@ __constant__ double d_l2; // range
 // Lennard-Jones constants
 __constant__ double d_LJcutoff;
 __constant__ double d_LJecut;
+__constant__ double d_LJfshift;
 // FENE constants
 __constant__ double d_stiff;
 __constant__ double d_extSq;
@@ -480,13 +481,13 @@ inline __device__ double calcLJInteraction(const double* thisPos, const double* 
 	auto ratio6 = pow(ratio, 6);
 	auto ratio12 = ratio6 * ratio6;
 	if (distance <= (d_LJcutoff * radSum)) {
-		auto forceShift = calcLJForceShift(radSum);
+		auto forceShift =  d_LJfshift / radSum;//calcLJForceShift(radSum);
 		auto gradMultiple = 24 * d_ec * (2 * ratio12 - ratio6) / distance - forceShift;
 		#pragma unroll (MAXDIM)
 		for (long dim = 0; dim < d_nDim; dim++) {
 	    	currentForce[dim] += gradMultiple * delta[dim] / distance;
 	  	}
-		return 0.5 * (4 * d_ec * (ratio12 - ratio6) - d_LJecut + forceShift * (distance - d_LJcutoff * radSum));
+		return 0.5 * (4 * d_ec * (ratio12 - ratio6) - d_LJecut - abs(forceShift) * (distance - d_LJcutoff * radSum));
 	}
 	return 0.0;
 }
@@ -713,7 +714,7 @@ __global__ void kernelCalcVertexInteraction2(const double* rad, const double* po
 }
 
 inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const double* otherPos, const double radSum, double &epot) {
-	double overlap, ratio, ratio6, ratio12, forceShift;
+	double overlap, ratio, ratio6, ratio12;
 	auto distance = calcDistance(thisPos, otherPos);
 	switch (d_simControl.potentialType) {
 		case simControlStruct::potentialEnum::harmonic:
@@ -730,8 +731,8 @@ inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const 
 		ratio12 = pow(ratio, 12);
 		ratio6 = pow(ratio, 6);
 		if (distance <= (d_LJcutoff * radSum)) {
-			forceShift = calcLJForceShift(radSum);
-			epot = 0.5 * (4 * d_ec * (ratio12 - ratio6) - d_LJecut + forceShift * (distance - d_LJcutoff * radSum));
+			auto forceShift =  d_LJfshift / radSum;//calcLJForceShift(radSum);
+			epot = 0.5 * (4 * d_ec * (ratio12 - ratio6) - d_LJecut - abs(forceShift) * (distance - d_LJcutoff * radSum));
 			return 24 * d_ec * (2 * ratio12 - ratio6) / distance - forceShift;
 		} else {
 			return 0;
@@ -834,7 +835,7 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 		auto otherRad = 0.0;
 		auto interaction = 0.0;
 		double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], secondPreviousPos[MAXDIM];
-		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM];//, relSegment[MAXDIM], relPos[MAXDIM];
+		double projPos[MAXDIM], segment[MAXDIM], previousSegment[MAXDIM];
 		getVertexPos(vertexId, pos, thisPos);
 		auto thisRad = rad[vertexId];
 		auto particleId = d_particleIdListPtr[vertexId];
@@ -848,10 +849,6 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 				auto previousId = getPreviousId(otherId, otherParticleId);
 				getVertexPos(previousId, pos, previousPos);
 				getDelta(otherPos, previousPos, segment);
-				//getDelta(thisPos, previousPos, relSegment);
-				//for (long dim = 0; dim < d_nDim; dim++) {
-				//	relPos[dim] = previousPos[dim] + relSegment[dim];
-				//}
 				auto length = calcNorm(segment);
 				auto projection = getProjection(thisPos, otherPos, previousPos, length);
 				// compare projection with previous vertex - concave particles can interact with two consecutive segments
@@ -867,7 +864,8 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 					interaction = calcVertexSegmentInteraction(thisPos, projPos, otherPos, previousPos, length, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim], &force[previousId*d_nDim]);
 					atomicAdd(&pEnergy[particleId], interaction);
 					atomicAdd(&pEnergy[otherParticleId], interaction);
-					if(previousProj >= 0 && previousProj < 1) { // other particle is concave - subtract excessive interaction with shared vertex
+					if(previousProj >= 0 && previousProj < 1) {
+						// other particle is concave - subtract excessive vertex-vertex interaction with shared vertex
 						isPreviousVertexSegment = true;
 						interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
 						atomicAdd(&pEnergy[particleId], -interaction);
@@ -875,6 +873,7 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 					}
 				} else if(projection < 0) {
 					if(previousProj >= 1 && isPreviousVertexSegment == false) {
+					// other particle is convex - add vertex-vertex interaction
 					interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
 					atomicAdd(&pEnergy[particleId], interaction);
 					atomicAdd(&pEnergy[otherParticleId], interaction);

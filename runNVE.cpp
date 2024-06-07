@@ -23,22 +23,31 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool readAndMakeNewDir = false, readAndSaveSameDir = false, runDynamics = false;
+  bool readAndMakeNewDir = false, readAndSaveSameDir = true, runDynamics = true;
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = true, logSave = false, linSave = false, saveFinal = true;
+  bool readState = true, logSave = false, linSave = true, saveFinal = true;
   long numParticles = atof(argv[6]), nDim = 2, numVertexPerParticle = 32, numVertices;
-  long step = 0, maxStep = atof(argv[4]), initialStep = atof(argv[5]), multiple = 1, saveFreq = 1;
-  long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), updateCount = 0;
+  long step = 0, maxStep = atof(argv[4]), initialStep = atof(argv[5]), multiple = 1, saveFreq = 1, updateCount = 0;
+  long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10); 
   double cutDistance, cutoff = 0.5, timeStep = atof(argv[2]), timeUnit = 0, sigma, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, Tinject = atof(argv[3]), size;
-  std::string outDir, energyFile, currentDir, inDir = argv[1], dirSample, whichDynamics = "nve/";
-  dirSample = whichDynamics + "T" + argv[3] + "/";
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, Tinject = atof(argv[3]), size;
+  std::string outDir, energyFile, currentDir, potType = argv[7], inDir = argv[1], dirSample, whichDynamics;
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
-  dpm.setSimulationType(simControlStruct::simulationEnum::gpu);
-  dpm.setPotentialType(simControlStruct::potentialEnum::wca);
+  if(potType == "lj") {
+    dpm.setPotentialType(simControlStruct::potentialEnum::lennardJones);
+    whichDynamics = "nve-lj/";
+    dpm.setLJcutoff(LJcut);
+  } else if(potType == "wca") {
+    dpm.setPotentialType(simControlStruct::potentialEnum::wca);
+    whichDynamics = "nve-wca/";
+  } else {
+    cout << "Setting default harmonic potential" << endl;
+    whichDynamics = "nve/";
+  }
+  dirSample = whichDynamics + "T" + argv[3] + "/";
   dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
   ioDPMFile ioDPM(&dpm);
   // set input and output
@@ -82,6 +91,9 @@ int main(int argc, char **argv) {
   numVertices = dpm.getNumVertices();
   // initialize simulation
   dpm.initNVE(Tinject, readState);
+  if(readAndMakeNewDir == true) {
+    dpm.adjustTemperature(Tinject);
+  }
   size = 2 * dpm.getMeanVertexRadius();
   cutDistance = dpm.setDisplacementCutoff(cutoff, size);
   dpm.calcNeighbors(cutDistance);
@@ -99,7 +111,7 @@ int main(int argc, char **argv) {
   ioDPM.saveNeighbors(outDir);
   while(step != maxStep) {
     dpm.NVELoop();
-    if(step % linFreq == 0) {
+    if(step % saveEnergyFreq == 0) {
       ioDPM.saveDeformableEnergy(step, timeStep, numVertices);
       if(step % checkPointFreq == 0) {
         cout << "NVE: current step: " << step;
@@ -118,6 +130,9 @@ int main(int argc, char **argv) {
       	  ioDPM.savePacking(outDir);
           ioDPM.saveNeighbors(outDir);
         }
+      }
+      if(readAndMakeNewDir == true) {
+        dpm.adjustTemperature(Tinject);
       }
     }
     if(logSave == true) {
