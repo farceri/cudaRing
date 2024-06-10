@@ -23,12 +23,12 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool read = false, readState = false, cpu = false, omp = false, wca = true, smooth = true, concavity = false;
+  bool read = false, readState = false, cpu = false, omp = false, lj = true, wca = false, smooth = true, concavity = false;
   long numParticles = atol(argv[4]), nDim = 2, numVertexPerParticle = 32, numVertices;
   long step, iteration = 0, maxIterations = 5e06, maxSearchStep = 1500, searchStep = 0, updateCount;
   long maxStep = atof(argv[6]), printFreq = int(maxStep / 10), saveFreq = int(printFreq / 10), minStep = 20, numStep = 0;
   double sigma, polydispersity = 0.2, previousPhi, currentPhi = 0.1, deltaPhi = 2e-03, phiTh = 0.9;
-  double cutDistance, cutoff = 0.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
+  double cutDistance, cutoff = 0.5, LJcut = 1.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
   double Tinject = atof(argv[3]), maxDelta, scaleFactor, timeStep = atof(argv[2]), size;
   double ea = 1e05, el = 20, eb = 10, ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
   thrust::host_vector<double> boxSize(nDim);
@@ -90,13 +90,13 @@ int main(int argc, char **argv) {
   }
   if(wca == true) {
     dpm.setPotentialType(simControlStruct::potentialEnum::wca);
+  } else if(lj == true) {
+    dpm.setPotentialType(simControlStruct::potentialEnum::lennardJones);
+    dpm.setLJcutoff(LJcut);
   }
   if(smooth == true) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
     dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
-  }
-  if(concavity == true) {
-    dpm.setConcavityType(simControlStruct::concavityEnum::on);
   }
   dpm.setEnergyCosts(ea, el, eb, ec);
   cout << "Energy scales: area " << ea << " segment " << el << " bending " << eb << " interaction " << ec << endl;
