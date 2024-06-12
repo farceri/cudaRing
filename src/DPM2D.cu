@@ -296,6 +296,25 @@ simControlStruct::simulationEnum DPM2D::getSimulationType() {
 	return simControl.simulationType;
 }
 
+void DPM2D::setGeometryType(simControlStruct::geometryEnum geometryType_) {
+	simControl.geometryType = geometryType_;
+  if(simControl.geometryType == simControlStruct::geometryEnum::normal) {
+    cout << "SP2D::setGeometryType: geometryType: normal" << endl;
+  } else if(simControl.geometryType == simControlStruct::geometryEnum::fixedBox) {
+    cout << "SP2D::setGeometryType: geometryType: fixedBox" << endl;
+  } else if(simControl.geometryType == simControlStruct::geometryEnum::fixedSides) {
+    cout << "SP2D:;setGeometryType: geometryType: fixedSides2D" << endl;
+  } else {
+    cout << "SP2D::setGeometryType: please specify valid geometryType: normal, fixedBox and fixedSides" << endl;
+  }
+	syncSimControlToDevice();
+}
+
+simControlStruct::geometryEnum DPM2D::getGeometryType() {
+	syncSimControlFromDevice();
+	return simControl.geometryType;
+}
+
 void DPM2D::setParticleType(simControlStruct::particleEnum particleType_) {
 	simControl.particleType = particleType_;
   if(simControl.particleType == simControlStruct::particleEnum::deformable) {
@@ -1307,12 +1326,15 @@ void DPM2D::setRandomParticles(double phi0, double extraRad_) {
   cout << "DPM2D::setRandomParticles: particle packing fraction: " << getPreferredPhi() << " " << areaSum/(boxSize[0] * boxSize[1]) << endl;
 }
 
-void DPM2D::setScaledRandomParticles(double phi0, double extraRad_) {
+void DPM2D::setScaledRandomParticles(double phi0, double extraRad_, double lx, double ly) {
   thrust::host_vector<double> boxSize(nDim);
   double scale, extraRad = extraRad_;
+  boxSize[0] = lx;
+  boxSize[1] = ly;
+  setBoxSize(boxSize);
   scale = sqrt(getPreferredPhi() / phi0);
-  boxSize[0] = scale;
-  boxSize[1] = scale;
+  boxSize[0] = lx * scale;
+  boxSize[1] = ly * scale;
   setBoxSize(boxSize);
   // extract random positions and radii
   double areaSum = 0;

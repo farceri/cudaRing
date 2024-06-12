@@ -21,6 +21,7 @@ using std::string;
 
 struct simControlStruct {
   enum class simulationEnum {gpu, cpu, omp} simulationType;
+  enum class geometryEnum {normal, fixedBox, fixedSides} geometryType;
   enum class particleEnum {deformable, rigid} particleType;
   enum class potentialEnum {harmonic, lennardJones, adhesive, wca} potentialType;
   enum class interactionEnum {vertexVertex, vertexSmooth, cellSmooth, all} interactionType;
@@ -205,6 +206,9 @@ public:
 
   void setSimulationType(simControlStruct::simulationEnum simulationType_);
 	simControlStruct::simulationEnum getSimulationType();
+
+  void setGeometryType(simControlStruct::geometryEnum geometryType_);
+	simControlStruct::geometryEnum getGeometryType();
 
   void setParticleType(simControlStruct::particleEnum particleType_);
 	simControlStruct::particleEnum getParticleType();
@@ -433,7 +437,7 @@ public:
 
   void setRandomParticles(double phi0, double extraRad);
 
-  void setScaledRandomParticles(double phi0, double extraRad);
+  void setScaledRandomParticles(double phi0, double extraRad, double lx, double ly);
 
   void initVerticesOnParticles();
 

@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
   long maxStep = atof(argv[6]), printFreq = int(maxStep / 10), saveFreq = int(printFreq / 10), minStep = 20, numStep = 0;
   double sigma, polydispersity = 0.2, previousPhi, currentPhi = 0.1, deltaPhi = 2e-03, phiTh = 0.9;
   double cutDistance, cutoff = 0.5, LJcut = 1.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
-  double Tinject = atof(argv[3]), maxDelta, scaleFactor, timeStep = atof(argv[2]), size;
+  double Tinject = atof(argv[3]), maxDelta, scaleFactor, timeStep = atof(argv[2]), size, lx = atof(argv[7]), ly = atof(argv[8]);
   double ea = 1e05, el = 20, eb = 10, ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
   thrust::host_vector<double> boxSize(nDim);
   std::string outDir = argv[1], currentDir, inDir, energyFile;
@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexVertex);
     // initialize polydisperse packing and minimize soft particle packing with harmonic potential
     dpm.setPolySizeDistribution(calA0, polydispersity);
-    dpm.setScaledRandomParticles(currentPhi, 1.5); //extraRad
+    dpm.setScaledRandomParticles(currentPhi, 1.5, lx, ly); //extraRad
     dpm.scaleParticlePacking();
     dpm.setEnergyCosts(0, 0, 0, ec);
     // minimize soft sphere packing
