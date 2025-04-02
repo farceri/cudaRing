@@ -127,12 +127,12 @@ void FIRE::bendParticleVelocityTowardsForce() {
 		thrust::fill(dpm_->d_particleVel.begin(), dpm_->d_particleVel.end(), double(0));
 	} else {
 		double velForceNormRatio = sqrt(velNormSquared / forceNormSquared);
-		double f_a(a);
+		double func_a(a);
 		auto r = thrust::counting_iterator<long>(0);
 		double* pVel = thrust::raw_pointer_cast(&(dpm_->d_particleVel[0]));
 		const double* pForce = thrust::raw_pointer_cast(&(dpm_->d_particleForce[0]));
 		auto perDOFBendParticleVelocity = [=] __device__ (long i) {
-			pVel[i] = (1 - f_a) * pVel[i] + f_a * pForce[i] * velForceNormRatio;
+			pVel[i] = (1 - func_a) * pVel[i] + func_a * pForce[i] * velForceNormRatio;
 		};
 
 		thrust::for_each(r, r + dpm_->d_particleVel.size(), perDOFBendParticleVelocity);

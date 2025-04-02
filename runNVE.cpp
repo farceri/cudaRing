@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = true, logSave = false, linSave = true, saveFinal = true;
+  bool readState = true, logSave = true, linSave = false, saveFinal = true;
   long numParticles = atof(argv[6]), nDim = 2, numVertexPerParticle = 32, numVertices;
   long step = 0, maxStep = atof(argv[4]), initialStep = atof(argv[5]), multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10); 
@@ -147,7 +147,7 @@ int main(int argc, char **argv) {
         currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
         ioDPM.saveState(currentDir);
-        //ioDPM.saveNeighbors(outDir);
+        ioDPM.saveNeighbors(currentDir);
       }
     }
     if(linSave == true) {
@@ -155,7 +155,7 @@ int main(int argc, char **argv) {
         currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
         ioDPM.saveState(currentDir);
-        //ioDPM.saveNeighbors(outDir);
+        ioDPM.saveNeighbors(currentDir);
       }
     }
     step += 1;

@@ -3,7 +3,8 @@
 ## USER SPECIFIC DIRECTORIES ##
 
 # CUDA directory:
-CUDA_ROOT_DIR=/usr/local/cuda-12.2
+CUDA_ROOT_DIR=/usr/lib/x86_64-linux-gnu
+#CUDA_ROOT_DIR=/usr/local/cuda-12.2
 #CUDA_ROOT_DIR=/gpfs/loomis/apps/avx/software/CUDAcore/11.3.1
 
 ##########################################################
@@ -21,7 +22,8 @@ CC_LIBS= -lstdc++fs
 ## NVCC COMPILER OPTIONS ##
 
 # NVCC compiler options:
-NVCC=nvcc
+NVCC=/usr/bin/nvcc
+#NVCC=nvcc
 NVCC_FLAGS= -O3 -Wno-deprecated-gpu-targets --expt-extended-lambda --expt-relaxed-constexpr -diag-suppress 550 #-g -G
 NVCC_LIBS=
 

@@ -27,7 +27,7 @@ int main(int argc, char **argv) {
   long numParticles = atol(argv[4]), nDim = 2, numVertexPerParticle = 32, numVertices;
   long step, iteration = 0, maxIterations = 5e06, maxSearchStep = 1500, searchStep = 0, updateCount;
   long maxStep = atof(argv[6]), printFreq = int(maxStep / 10), saveFreq = int(printFreq / 10), minStep = 20, numStep = 0;
-  double sigma, polydispersity = 0.2, previousPhi, currentPhi = 0.1, deltaPhi = 2e-03, phiTh = 0.9;
+  double sigma, polydispersity = 0.1, previousPhi, currentPhi = 0.1, deltaPhi = 2e-03, phiTh = 0.9;
   double cutDistance, cutoff = 0.5, LJcut = 1.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
   double Tinject = atof(argv[3]), maxDelta, scaleFactor, timeStep = atof(argv[2]), size, lx = atof(argv[7]), ly = atof(argv[8]);
   double ea = 1e05, el = 20, eb = 10, ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
@@ -38,6 +38,8 @@ int main(int argc, char **argv) {
 	// initialize dpm object
 	DPM2D dpm(numParticles, nDim, numVertexPerParticle);
   ioDPMFile ioDPM(&dpm);
+  outDir = outDir + argv[4] + "-box" + argv[7] + argv[8] + "-A" + argv[5] + "/";
+  cout << outDir << endl;
   std::experimental::filesystem::create_directory(outDir);
   // read initial configuration
   if(read == true) {

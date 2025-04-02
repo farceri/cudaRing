@@ -18,9 +18,10 @@
 #include <omp.h>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
+#include <thrust/sort.h>
 #include <thrust/fill.h>
 #include <thrust/copy.h>
-#include <thrust/sort.h>
+#include <thrust/gather.h>
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/inner_product.h>
@@ -66,6 +67,7 @@ DPM2D::DPM2D(long nParticles, long dim, long nVertexPerParticle) {
 	ec = 1;
   cutDistance = 1;
   updateCount = 0;
+  shift = false;
   d_boxSize.resize(nDim);
   thrust::fill(d_boxSize.begin(), d_boxSize.end(), double(1));
   d_stress.resize(nDim * nDim);
@@ -202,6 +204,7 @@ void DPM2D::initNeighbors(long numVertices_) {
   d_maxNeighborList.resize(numVertices_);
   thrust::fill(d_neighborList.begin(), d_neighborList.end(), -1L);
   thrust::fill(d_maxNeighborList.begin(), d_maxNeighborList.end(), maxNeighbors);
+  //initParticleNeighbors(numParticles);
 }
 
 void DPM2D::initSmoothNeighbors(long numVertices_) {
@@ -600,6 +603,25 @@ thrust::host_vector<double> DPM2D::getPerimeters() {
   thrust::host_vector<double> perimeterFromDevice;
   perimeterFromDevice = d_perimeter;
   return perimeterFromDevice;
+}
+
+thrust::host_vector<double> DPM2D::getParticleShapes() {
+  thrust::device_vector<double> d_shape(numParticles * 3);
+  auto r = thrust::counting_iterator<long>(0);
+  const double* perimeter = thrust::raw_pointer_cast(&d_perimeter[0]);
+  const double* area = thrust::raw_pointer_cast(&d_area[0]);
+  double* shape = thrust::raw_pointer_cast(&d_shape[0]);
+
+  auto calcShape = [=] __device__ (long pId) {
+    shape[pId * 3] = area[pId];
+    shape[pId * 3 + 1] = perimeter[pId];
+    shape[pId * 3 + 2] = perimeter[pId] * perimeter[pId] / (4 * PI * area[pId]);
+  };
+
+  thrust::for_each(r, r + numParticles, calcShape);
+  thrust::host_vector<double> shapeFromDevice;
+  shapeFromDevice = d_shape;
+  return shapeFromDevice;
 }
 
 double DPM2D::getMeanParticleSize() {
@@ -1100,6 +1122,9 @@ void DPM2D::checkMaxDisplacement() {
   if(3*maxDelta > cutoff) {
     calcNeighborList(cutDistance);
     resetLastPositions();
+    if(shift == true) {
+      removeCOMDrift();
+    }
     updateCount += 1;
     //cout << "DPM2D::checkMaxDisplacement - updated neighbors, maxDelta: " << maxDelta << " cutoff: " << cutoff << endl;
   }
@@ -1116,8 +1141,39 @@ void DPM2D::checkDisplacement() {
   if(sumFlag != 0) {
     calcNeighborList(cutDistance);
     resetLastPositions();
+    if(shift == true) {
+      removeCOMDrift();
+    }
     updateCount += 1;
   }
+}
+
+void DPM2D::removeCOMDrift() {
+  getMaxDisplacement();
+  // compute drift on x
+  thrust::device_vector<double> disp_x(numVertices);
+  thrust::device_vector<long> idx(numVertices);
+  thrust::sequence(idx.begin(), idx.end(), 0, 2);
+  thrust::gather(idx.begin(), idx.end(), d_disp.begin(), disp_x.begin());
+  double drift_x = thrust::reduce(disp_x.begin(), disp_x.end(), double(0), thrust::plus<double>()) / numVertices;
+  // compute drift on y
+  thrust::device_vector<double> disp_y(numVertices);
+  thrust::device_vector<long> idy(numVertices);
+  thrust::sequence(idy.begin(), idy.end(), 1, 2);
+  thrust::gather(idy.begin(), idy.end(), d_disp.begin(), disp_y.begin());
+  double drift_y = thrust::reduce(disp_y.begin(), disp_y.end(), double(0), thrust::plus<double>()) / numVertices;
+
+  // subtract drift from current positions
+  long s_nDim(nDim);
+  auto r = thrust::counting_iterator<long>(0);
+	double* pos = thrust::raw_pointer_cast(&d_pos[0]);
+	double* boxSize = thrust::raw_pointer_cast(&d_boxSize[0]);
+
+  auto removeDrift = [=] __device__ (long vId) {
+		pos[vId * s_nDim] -= drift_x;
+    pos[vId * s_nDim + 1] -= drift_y;
+  };
+  thrust::for_each(r, r + numVertices, removeDrift);
 }
 
 void DPM2D::checkNeighbors() {
@@ -3169,6 +3225,7 @@ double DPM2D::getParticleDrift() {
 }
 
 thrust::host_vector<long> DPM2D::getParticleNeighbors() {
+  calcParticleNeighbors();
   thrust::host_vector<long> partNeighborListFromDevice;
   partNeighborListFromDevice = d_partNeighborList;
   return partNeighborListFromDevice;
@@ -3318,6 +3375,7 @@ void DPM2D::initNVE(double Temp, bool readState) {
   thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
   calcParticlePositions();
   d_particleInitPos = d_particlePos;
+  shift = true;
   if(readState == false) {
     this->sim_->injectKineticEnergy();
   }

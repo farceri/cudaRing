@@ -447,6 +447,7 @@ public:
   void saveDeformableState(string dirName) {
     save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
+    save2DFile(dirName + "shapes.dat", dpm_->getParticleShapes(), 3); // 3 is for area, perimeter and shape parameter
   }
 
   void saveDeformableActiveState(string dirName) {
@@ -481,6 +482,12 @@ public:
       save1DIndexFile(dirName + "listHeader.dat", dpm_->getListHeader());
       save2DIndexFile(dirName + "cellIndexList.dat", dpm_->getCellIndexList(), dpm_->nDim);
       //save3DIndexFile(dirName + "cellNeighborList.dat", dpm_->getCellNeighborList(), dpm_->numCells, dpm_->numCells, dpm_->cellNeighborListSize);
+    }
+  }
+
+  void saveCellNeighbors(string dirName) {
+    if(dpm_->simControl.neighborType == simControlStruct::neighborEnum::neighbor) {
+      save2DIndexFile(dirName + "cellNeighbors.dat", dpm_->getParticleNeighbors(), dpm_->partNeighborListSize);
     }
   }
 

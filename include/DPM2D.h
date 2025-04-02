@@ -89,6 +89,7 @@ public:
   // neighbor variables
   double cutoff, cutDistance;
   long updateCount;
+  bool shift;
 
   // vertex shape variables
   thrust::device_vector<double> d_rad;
@@ -273,6 +274,8 @@ public:
 
   thrust::host_vector<double> getPerimeters();
 
+  thrust::host_vector<double> getParticleShapes();
+
   double getMeanParticleSize();
 
   double getMeanParticleSigma();
@@ -405,6 +408,8 @@ public:
   void checkMaxDisplacement();
 
   void checkDisplacement();
+
+  void removeCOMDrift();
 
   void checkNeighbors();
 

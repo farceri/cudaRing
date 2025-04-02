@@ -35,12 +35,12 @@ int main(int argc, char **argv) {
   }
   // initialize sp object
 	DPM2D dp(numParticles, nDim, numVertexPerParticle);
-  dirSample = "lj-smooth-cpu-eb10/";
   dp.printDeviceProperties();
   long numVertices = dp.getNumVertices();
-  dp.setSimulationType(simControlStruct::simulationEnum::cpu);
+  //dp.setSimulationType(simControlStruct::simulationEnum::cpu);
+  dp.setSimulationType(simControlStruct::simulationEnum::gpu);
   if(rigid == true) {
-    dp.setParticleType(simControlStruct::particleEnum::deformable);
+    dp.setParticleType(simControlStruct::particleEnum::rigid);
   }
   dp.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
   dp.setEnergyCosts(ea, el, eb, ec);
@@ -49,11 +49,14 @@ int main(int argc, char **argv) {
     cout << "Setting Lennard-Jones potential" << endl;
     dp.setLJcutoff(LJcutoff);
     y1 = 0.69;
+    dirSample = "test-lj/";
   } else if(wca == true) {
     dp.setPotentialType(simControlStruct::potentialEnum::wca);
     cout << "Setting WCA potential" << endl;
+    dirSample = "test-wca/";
   } else {
     cout << "Setting Harmonic potential" << endl;
+    dirSample = "test/";
   }
   if(alltoall == true) {
     dp.setNeighborType(simControlStruct::neighborEnum::allToAll);
