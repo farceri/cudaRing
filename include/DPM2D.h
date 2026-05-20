@@ -21,7 +21,7 @@ using std::string;
 
 struct simControlStruct {
   enum class simulationEnum {gpu, cpu, omp} simulationType;
-  enum class geometryEnum {normal, fixedBox, fixedSides} geometryType;
+  enum class geometryEnum {normal, fixedBox, fixedSides, roundBox} geometryType;
   enum class particleEnum {deformable, rigid} particleType;
   enum class potentialEnum {harmonic, lennardJones, adhesive, wca} potentialType;
   enum class interactionEnum {vertexVertex, vertexSmooth, cellSmooth, all} interactionType;
@@ -68,6 +68,8 @@ public:
 
   thrust::device_vector<double> d_boxSize;
   thrust::host_vector<double> h_boxSize; //HOST
+  double boxRadius;
+  double ew;
 
   // time step
   double dt;
@@ -130,6 +132,9 @@ public:
   thrust::device_vector<double> d_particleInitPos;
 	thrust::device_vector<double> d_particleDelta;
 
+  // wall variables
+  thrust::device_vector<double> d_wallForce;
+
   // rigid variables
   thrust::device_vector<double> d_torque;
   thrust::device_vector<double> d_particleAngvel;
@@ -179,7 +184,11 @@ public:
 
   void initShapeVariables(long numVertices_, long numParticles_);
 
+  void initVertexWallForce(long numVertices_);
+
   void initDynamicalVariables(long numVertices_);
+
+  void initParticleWallForce(long numParticles_);
 
   void initParticleVariables(long numParticles_);
 
@@ -251,6 +260,10 @@ public:
 
   void setBoxSize(thrust::host_vector<double> &boxSize_);
   thrust::host_vector<double> getBoxSize();
+
+  void setBoxRadius(double boxRadius_);
+  void scaleBoxRadius(double scale_);
+  double getBoxRadius();
 
   // shape variables
   void setVertexRadii(thrust::host_vector<double> &rad_);
@@ -444,9 +457,11 @@ public:
 
   void setScaledRandomParticles(double phi0, double extraRad, double lx, double ly);
 
+  void setRoundScaledRandomParticles(double phi0, double extraRad, double boxRadius_);
+
   void initVerticesOnParticles();
 
-  void scaleBoxSize(double scale);
+  void scaleBox(double scale);
 
   void scaleVertexPositions(double scale);
 
@@ -474,6 +489,8 @@ public:
 
   // force and energy
   void setEnergyCosts(double ea_, double el_, double eb_, double ec_);
+
+  void setBoxEnergyCost(double ew_);
 
   void setAttractionConstants(double l1_, double l2_);
 
@@ -505,8 +522,6 @@ public:
 
   void calcForceEnergy();
 
-  void calcForceEnergyGPU();
-
   thrust::host_vector<double> getInteractionForces();
 
   thrust::host_vector<double> getInteractionForcesGPU();
@@ -516,6 +531,8 @@ public:
   void calcForceEnergyOMP();
 
   void calcShapeForceEnergy();
+
+  void calcForceEnergyGPU();
 
   double pbcDistance(double x1, double x2, double size);
 
@@ -578,11 +595,13 @@ public:
 
   void fillLinkedList();
 
-  void syncLinkedListToDevice();
-
   void calcParticleNeighborList(double cutDistance);
 
   void syncParticleNeighborsToDevice();
+
+  void calcParticleInteraction();
+
+  void calcParticleFixedWallInteraction();
 
   void calcParticleForceEnergy();
 
@@ -635,6 +654,10 @@ public:
   void initNVE(double Tin, bool readState);
 
   void NVELoop();
+
+  void initNVERescale(double Tin);
+
+  void NVERescaleLoop();
 
   void initBrownian(double Temp, double gamma, bool readState);
 

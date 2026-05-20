@@ -78,5 +78,4 @@ struct gaussNum
     }
 };
 
-
 #endif /* DEFS_H_ */

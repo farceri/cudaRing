@@ -23,37 +23,63 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool read = false, readState = false, cpu = false, omp = false, lj = true, wca = false, smooth = true, concavity = false;
-  long numParticles = atol(argv[4]), nDim = 2, numVertexPerParticle = 32, numVertices;
+  bool read = false, readState = false, smooth = true;
+  // input variables
+  long numParticles = atol(argv[6]), maxStep = atof(argv[7]);
+  double timeStep = atof(argv[3]), Tinject = atof(argv[4]), shape0 = atof(argv[5]), lx = atof(argv[8]), ly = atof(argv[9]);
+  std::string outDir = argv[1], inDir = argv[2], potType = argv[10], boxType = argv[11];
+  // other variables
+  long nDim = 2, numVertexPerParticle = 32, numVertices;
   long step, iteration = 0, maxIterations = 5e06, maxSearchStep = 1500, searchStep = 0, updateCount;
-  long maxStep = atof(argv[6]), printFreq = int(maxStep / 10), saveFreq = int(printFreq / 10), minStep = 20, numStep = 0;
-  double sigma, polydispersity = 0.1, previousPhi, currentPhi = 0.1, deltaPhi = 2e-03, phiTh = 0.9;
+  long printFreq = int(maxStep / 10), saveFreq = int(printFreq / 10), minStep = 20, numStep = 0;
+  double sigma, polydispersity = 0.1, previousPhi, currentPhi = 0.1, deltaPhi = 2e-03, phiTh = 0.9, boxRadius = 0;
   double cutDistance, cutoff = 0.5, LJcut = 1.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
-  double Tinject = atof(argv[3]), maxDelta, scaleFactor, timeStep = atof(argv[2]), size, lx = atof(argv[7]), ly = atof(argv[8]);
-  double ea = 1e05, el = 20, eb = 10, ec = 1, calA0 = atof(argv[5]), thetaA = 1, thetaK = 0;
+  double maxDelta, scaleFactor, size;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, ew = 10, thetaA = 1, thetaK = 0;
   thrust::host_vector<double> boxSize(nDim);
-  std::string outDir = argv[1], currentDir, inDir, energyFile;
+  std::string currentDir, energyFile, simType = "gpu", dynType = "nve";
   // fire paramaters: a_start, f_dec, f_inc, f_a, dt, dt_max, a
   std::vector<double> particleFIREparams = {0.2, 0.5, 1.1, 0.99, FIREStep, 10*FIREStep, 0.2};
 	// initialize dpm object
 	DPM2D dpm(numParticles, nDim, numVertexPerParticle);
+  if(boxType == "square") {
+    dpm.setGeometryType(simControlStruct::geometryEnum::fixedBox);
+    dpm.setBoxEnergyCost(ew);
+  } else if(boxType == "sides") {
+    dpm.setGeometryType(simControlStruct::geometryEnum::fixedSides);
+    dpm.setBoxEnergyCost(ew);
+  } else if(boxType == "circle") {
+    dpm.setGeometryType(simControlStruct::geometryEnum::roundBox);
+    dpm.setBoxEnergyCost(ew);
+  } else {
+    dpm.setGeometryType(simControlStruct::geometryEnum::normal);
+  }
   ioDPMFile ioDPM(&dpm);
-  outDir = outDir + argv[4] + "-box" + argv[7] + argv[8] + "-A" + argv[5] + "/";
+  if(boxType == "circle") {
+    outDir = outDir + "circle/" + argv[6] + "-A" + argv[5] + "/";
+  } else {
+    outDir = outDir + argv[6] + "-box" + argv[8] + argv[9] + "-A" + argv[5] + "/";
+  }
   cout << outDir << endl;
   std::experimental::filesystem::create_directory(outDir);
-  // read initial configuration
-  if(read == true) {
-    inDir = outDir + argv[7];
+
+  // initialization
+  if (inDir != "0") {
+    cout << "Reading initial configuration from " << inDir << endl;
+    read = true;
+    readState = true;
+    inDir = outDir + inDir + "/";
     ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
-    if(readState == true) {
-      ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
-    }
-  } else {
+    ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
+  } else { // initialize polydisperse packing and minimize soft particle packing with harmonic potential
     dpm.setPotentialType(simControlStruct::potentialEnum::harmonic);
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexVertex);
-    // initialize polydisperse packing and minimize soft particle packing with harmonic potential
-    dpm.setPolySizeDistribution(calA0, polydispersity);
-    dpm.setScaledRandomParticles(currentPhi, 1.5, lx, ly); //extraRad
+    dpm.setPolySizeDistribution(shape0, polydispersity);
+    if(boxType == "circle") {
+      dpm.setRoundScaledRandomParticles(currentPhi, 1.5, lx); // lx is box radius for round geometry
+    } else {
+      dpm.setScaledRandomParticles(currentPhi, 1.5, lx, ly); // 1.5 is extraRad
+    }
     dpm.scaleParticlePacking();
     dpm.setEnergyCosts(0, 0, 0, ec);
     // minimize soft sphere packing
@@ -75,26 +101,29 @@ int main(int argc, char **argv) {
     cout << "\nFIRE: iteration: " << iteration;
     cout << " maxUnbalancedForce: " << setprecision(precision) << dpm.getParticleMaxUnbalancedForce();
     cout << " energy: " << setprecision(precision) << dpm.getParticlePotentialEnergy() << endl;
-    currentDir = outDir + "sp/";
+    currentDir = outDir + "fire/";
     std::experimental::filesystem::create_directory(currentDir);
     ioDPM.saveParticlePacking(currentDir);
     // put vertices on particle perimeters
     dpm.initVerticesOnParticles();
     dpm.scalePacking(dpm.getMeanParticleSize());
-    currentDir = outDir + "dp/";
-    std::experimental::filesystem::create_directory(currentDir);
-    ioDPM.savePacking(currentDir);
   }
-  if(cpu == true) {
+
+  // simulation settings
+  if(simType == "cpu") {
     dpm.setSimulationType(simControlStruct::simulationEnum::cpu);
-  } else if(omp == true) {
+  } else if(simType == "omp") {
     dpm.setSimulationType(simControlStruct::simulationEnum::omp);
+  } else {
+    dpm.setSimulationType(simControlStruct::simulationEnum::gpu);
   }
-  if(wca == true) {
+  if(potType == "wca") {
     dpm.setPotentialType(simControlStruct::potentialEnum::wca);
-  } else if(lj == true) {
+  } else if(potType == "lj") {
     dpm.setPotentialType(simControlStruct::potentialEnum::lennardJones);
     dpm.setLJcutoff(LJcut);
+  } else {
+    dpm.setPotentialType(simControlStruct::potentialEnum::harmonic);
   }
   if(smooth == true) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
@@ -103,38 +132,53 @@ int main(int argc, char **argv) {
   dpm.setEnergyCosts(ea, el, eb, ec);
   cout << "Energy scales: area " << ea << " segment " << el << " bending " << eb << " interaction " << ec << endl;
   numVertices = dpm.getNumVertices();
+
+  // quasistatic isothermal compression
   dpm.calcParticleShape();
   currentPhi = dpm.getPhi();
-  cout << "Start compression: current packing fraction: " << dpm.getPhi() << " preferred: " << dpm.getPreferredPhi() << endl;
+  cout << "CURRENT PHI: " << currentPhi << " preferred phi: " << dpm.getPreferredPhi() << endl;
   previousPhi = currentPhi;
-  // isotropic isothermal compression
+  sigma = dpm.getMeanParticleSize();
+  size = 2 * dpm.getMeanVertexRadius();
+  timeUnit = sigma / sqrt(ec); //epsilon and mass are 1 sqrt(m sigma^2 / epsilon)
+  timeStep = dpm.setTimeStep(timeStep * timeUnit);
+  cout << "Time step: " << timeStep << " sigma: " << sigma << " size: " << size << " Tinject: " << Tinject << endl;
+  if (dynType == "scalevel") {
+    dpm.initNVERescale(Tinject);
+  } else {
+    dpm.initNVE(Tinject, readState);
+  }
+  currentDir = outDir + "initial/";
+  std::experimental::filesystem::create_directory(currentDir);
+  ioDPM.savePacking(currentDir);
   while (searchStep < maxSearchStep) {
-    currentDir = outDir + std::to_string(dpm.getPhi()).substr(0,6) + "/";
+    currentDir = outDir + std::to_string(round(dpm.getPhi() * 1000) / 1000).substr(0,5) + "/";
     std::experimental::filesystem::create_directory(currentDir);
     energyFile = currentDir + "energy.dat";
     ioDPM.openEnergyFile(energyFile);
-    sigma = dpm.getMeanParticleSize();
-    timeUnit = sigma / sqrt(ec);//epsilon and mass are 1 sqrt(m sigma^2 / epsilon)
-    timeStep = dpm.setTimeStep(timeStep * timeUnit);
-    cout << "Time step: " << timeStep << " sigma: " << sigma << " Tinject: " << Tinject << endl;
-    dpm.initNVE(Tinject, readState);
-    size = 2 * dpm.getMeanVertexRadius();
     cutDistance = dpm.setDisplacementCutoff(cutoff, size);
     dpm.calcNeighbors(cutDistance);
     dpm.calcForceEnergy();
-    dpm.resetLastPositions();
+    dpm.resetUpdateCount();
+    dpm.setParticleInitialPositions();
     waveQ = dpm.getDeformableWaveNumber();
     // equilibrate deformable particles
     step = 0;
     // remove energy injected by compression
-    if(searchStep != 0) {
+    if(searchStep != 0 && dynType == "nve") {
+      dpm.calcNeighbors(cutDistance);
+      dpm.calcForceEnergy();
       cout << "Energy after compression - E/N: " << dpm.getEnergy() / numVertices << endl;
       dpm.adjustKineticEnergy(prevEnergy);
       dpm.calcForceEnergy();
       cout << "Energy after adjustment - E/N: " << dpm.getEnergy() / numVertices << endl;
     }
     while(step != maxStep) {
-      dpm.NVELoop();
+      if (dynType == "scalevel") {
+        dpm.NVERescaleLoop();
+      } else {
+        dpm.NVELoop();
+      }
       if(step % saveFreq == 0) {
         ioDPM.saveEnergy(step, timeStep, numParticles, numVertices);
       }
@@ -163,14 +207,18 @@ int main(int argc, char **argv) {
       //dpm.scaleVertices(scaleFactor);
       //dpm.calcParticlesShape();
       //dpm.scalePacking(dpm.getMeanParticleSize());
-      dpm.scaleBoxSize(scaleFactor);
-      boxSize = dpm.getBoxSize();
+      dpm.scaleBox(scaleFactor);
       currentPhi = dpm.getPhi();
-      cout << "\nNew packing fraction: " << currentPhi << " preferred: " << dpm.getPreferredPhi() << endl;
-      cout << "New boxSize: Lx: " << boxSize[0] << " Ly: " << boxSize[1] << " scale: " << scaleFactor << endl;
+      cout << "\nNEW PACKING FRACTION: " << currentPhi << " preferred: " << dpm.getPreferredPhi() << endl;
+      if(boxType == "roundBox") {
+        boxRadius = dpm.getBoxRadius();
+        cout << "New boxSize: boxR: " << boxRadius << " scale: " << scaleFactor << endl;
+      } else {
+        boxSize = dpm.getBoxSize();
+        cout << "New boxSize: Lx: " << boxSize[0] << " Ly: " << boxSize[1] << " scale: " << scaleFactor << endl;
+      }
       searchStep += 1;
     }
   }
-
   return 0;
 }

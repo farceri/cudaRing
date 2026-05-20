@@ -110,6 +110,17 @@ public:
   virtual void integrate();
 };
 
+// NVE integrator with velocity rescale child of Langevin
+class NVERescale: public Langevin
+{
+public:
+  NVERescale() = default;
+  NVERescale(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
+
+  virtual void injectKineticEnergy();
+  virtual void integrate();
+};
+
 // Brownian integrator child of NVE
 class Brownian: public NVE
 {

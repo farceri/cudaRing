@@ -65,6 +65,7 @@ DPM2D::DPM2D(long nParticles, long dim, long nVertexPerParticle) {
 	el = 20;
 	eb = 10;
 	ec = 1;
+  ew = 1e03;
   cutDistance = 1;
   updateCount = 0;
   shift = false;
@@ -127,6 +128,11 @@ void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
   thrust::fill(d_particlePos.begin(), d_particlePos.end(), double(0));
 }
 
+void DPM2D::initVertexWallForce(long numVertices_) {
+  d_wallForce.resize(numVertices_ * nDim);
+  thrust::fill(d_wallForce.begin(), d_wallForce.end(), double(0));
+}
+
 void DPM2D::initDynamicalVariables(long numVertices_) {
   d_pos.resize(numVertices_ * nDim);
   d_vel.resize(numVertices_ * nDim);
@@ -140,6 +146,20 @@ void DPM2D::initDynamicalVariables(long numVertices_) {
   thrust::fill(d_energy.begin(), d_energy.end(), double(0));
   thrust::fill(d_lastPos.begin(), d_lastPos.end(), double(0));
   thrust::fill(d_disp.begin(), d_disp.end(), double(0));
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::fixedBox:
+    case simControlStruct::geometryEnum::fixedSides:
+    case simControlStruct::geometryEnum::roundBox:
+    initVertexWallForce(numVertices_);
+    break;
+    default:
+    break;
+  }
+}
+
+void DPM2D::initParticleWallForce(long numParticles_) {
+  d_wallForce.resize(numParticles_ * nDim);
+  thrust::fill(d_wallForce.begin(), d_wallForce.end(), double(0));
 }
 
 void DPM2D::initParticleVariables(long numParticles_) {
@@ -155,8 +175,15 @@ void DPM2D::initParticleVariables(long numParticles_) {
   thrust::fill(d_particleLastPos.begin(), d_particleLastPos.end(), double(0));
   d_perParticleStress.resize(numParticles_ * nDim * nDim);
   thrust::fill(d_perParticleStress.begin(), d_perParticleStress.end(), double(0));
-  d_particleAngle.resize(numParticles_);
-  thrust::fill(d_particleAngle.begin(), d_particleAngle.end(), double(0));
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::fixedBox:
+    case simControlStruct::geometryEnum::fixedSides:
+    case simControlStruct::geometryEnum::roundBox:
+    initParticleWallForce(numParticles_);
+    break;
+    default:
+    break;
+  }
 }
 
 void DPM2D::initDeltaVariables(long numVertices_, long numParticles_) {
@@ -174,10 +201,12 @@ void DPM2D::initDeltaVariables(long numVertices_, long numParticles_) {
 
 void DPM2D::initRotationalVariables(long numVertices_, long numParticles_) {
   d_torque.resize(numVertices_);
+  d_particleAngle.resize(numParticles_);
   d_particleAngvel.resize(numParticles_);
   d_particleTorque.resize(numParticles_);
   d_momentOfInertia.resize(numParticles_);
   thrust::fill(d_torque.begin(), d_torque.end(), double(0));
+  thrust::fill(d_particleAngle.begin(), d_particleAngle.end(), double(0));
   thrust::fill(d_particleAngvel.begin(), d_particleAngvel.end(), double(0));
   thrust::fill(d_particleTorque.begin(), d_particleTorque.end(), double(0));
   thrust::fill(d_momentOfInertia.begin(), d_momentOfInertia.end(), double(0));
@@ -285,8 +314,12 @@ void DPM2D::setSimulationType(simControlStruct::simulationEnum simulationType_) 
   } else if(simControl.simulationType == simControlStruct::simulationEnum::cpu) {
     cout << "DPM2D::setSimulationType: simulationType: cpu" << endl;
     initHostVariables(numVertices, numParticles);
+    // only works in periodic boundary conditions
+    setGeometryType(simControlStruct::geometryEnum::normal);
   } else if(simControl.simulationType == simControlStruct::simulationEnum::omp) {
     initHostVariables(numVertices, numParticles);
+    // only works in periodic boundary conditions
+    setGeometryType(simControlStruct::geometryEnum::normal);
     cout << "DPM2D::setSimulationType: simulationType: omp" << endl;
   } else {
     cout << "DPM2D::setSimulationType: please specify valid simulationType: gpu, cpu or omp" << endl;
@@ -304,11 +337,19 @@ void DPM2D::setGeometryType(simControlStruct::geometryEnum geometryType_) {
   if(simControl.geometryType == simControlStruct::geometryEnum::normal) {
     cout << "SP2D::setGeometryType: geometryType: normal" << endl;
   } else if(simControl.geometryType == simControlStruct::geometryEnum::fixedBox) {
+    d_wallForce.resize(numVertices * nDim);
+    thrust::fill(d_wallForce.begin(), d_wallForce.end(), double(0));
     cout << "SP2D::setGeometryType: geometryType: fixedBox" << endl;
   } else if(simControl.geometryType == simControlStruct::geometryEnum::fixedSides) {
-    cout << "SP2D:;setGeometryType: geometryType: fixedSides2D" << endl;
+    d_wallForce.resize(numVertices * nDim);
+    thrust::fill(d_wallForce.begin(), d_wallForce.end(), double(0));
+    cout << "SP2D:;setGeometryType: geometryType: fixedSides" << endl;
+  } else if(simControl.geometryType == simControlStruct::geometryEnum::roundBox) {
+    d_wallForce.resize(numVertices * nDim);
+    thrust::fill(d_wallForce.begin(), d_wallForce.end(), double(0));
+    cout << "SP2D::setGeometryType: geometryType: roundBox" << endl;
   } else {
-    cout << "SP2D::setGeometryType: please specify valid geometryType: normal, fixedBox and fixedSides" << endl;
+    cout << "SP2D::setGeometryType: please specify valid geometryType: normal, fixedBox, fixedSides and roundBox" << endl;
   }
 	syncSimControlToDevice();
 }
@@ -532,6 +573,45 @@ thrust::host_vector<double> DPM2D::getBoxSize() {
   return boxSizeFromDevice;
 }
 
+void DPM2D::setBoxRadius(double boxRadius_) {
+	syncSimControlFromDevice();
+	if(simControl.geometryType == simControlStruct::geometryEnum::roundBox) {
+		boxRadius = boxRadius_;
+		cudaError err = cudaMemcpyToSymbol(d_boxRadius, &boxRadius, sizeof(boxRadius));
+		if(err != cudaSuccess) {
+			cout << "cudaMemcpyToSymbol Error: " << cudaGetErrorString(err) << endl;
+		}
+	}
+	else {
+		cout << "DPM2D::setBoxRadius: attempting to set boxRadius without using round boundary conditions" << endl;
+	}
+  cout << "DPM2D::setBoxRadius: boxRadius: " << boxRadius << endl;
+}
+
+void DPM2D::scaleBoxRadius(double scale_) {
+	syncSimControlFromDevice();
+	if(simControl.geometryType == simControlStruct::geometryEnum::roundBox) {
+		boxRadius = scale_ * boxRadius;
+		cudaError err = cudaMemcpyToSymbol(d_boxRadius, &boxRadius, sizeof(boxRadius));
+		if(err != cudaSuccess) {
+			cout << "cudaMemcpyToSymbol Error: " << cudaGetErrorString(err) << endl;
+		}
+	}
+	else {
+		cout << "DPM2D::scaleBoxRadius: attempting to scale boxRadius without using round boundary conditions" << endl;
+	}
+  cout << "DPM2D::scaleBoxRadius: scale: " << scale_ << " boxRadius: " << boxRadius << endl;
+}
+
+double DPM2D::getBoxRadius() {
+  double boxRadiusFromDevice;
+	cudaError err = cudaMemcpyFromSymbol(&boxRadiusFromDevice, d_boxRadius, sizeof(d_boxRadius));
+	if(err != cudaSuccess) {
+		cout << "cudaMemcpyToSymbol Error: " << cudaGetErrorString(err) << endl;
+	}
+	return boxRadiusFromDevice;
+}
+
 //**************************** shape variables *******************************//
 void DPM2D::setVertexRadii(thrust::host_vector<double> &rad_) {
   d_rad = rad_;
@@ -625,7 +705,7 @@ thrust::host_vector<double> DPM2D::getParticleShapes() {
 }
 
 double DPM2D::getMeanParticleSize() {
-  return sqrt(thrust::reduce(d_a0.begin(), d_a0.end(), double(0), thrust::plus<double>()) / (PI * numParticles));
+  return 2 * sqrt(thrust::reduce(d_a0.begin(), d_a0.end(), double(0), thrust::plus<double>()) / (PI * numParticles));
 }
 
 double DPM2D::getMeanParticleSigma() {
@@ -1008,7 +1088,14 @@ double DPM2D::getPhi() {
   kernelCalcVertexArea<<<dimGrid,dimBlock>>>(rad, vertexArea);
   phi += PI * thrust::reduce(d_vertexArea.begin(), d_vertexArea.end(), double(0), thrust::plus<double>());
   //cout << " vertex: " << phi / (d_boxSize[0] * d_boxSize[1]) << endl;
-  return phi / (d_boxSize[0] * d_boxSize[1]);
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::roundBox:
+    return phi / (PI * boxRadius * boxRadius);
+    break;
+    default:
+    return phi / (d_boxSize[0] * d_boxSize[1]);
+    break;
+  }
 }
 
 double DPM2D::getPreferredPhi() {
@@ -1019,18 +1106,39 @@ double DPM2D::getPreferredPhi() {
   const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
   kernelCalcVertexArea<<<dimGrid,dimBlock>>>(rad, vertexArea);
   phi += PI * thrust::reduce(d_vertexArea.begin(), d_vertexArea.end(), double(0), thrust::plus<double>());
-  return phi / (d_boxSize[0] * d_boxSize[1]);
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::roundBox:
+    return phi / (PI * boxRadius * boxRadius);
+    break;
+    default:
+    return phi / (d_boxSize[0] * d_boxSize[1]);
+    break;
+  }
 }
 
 double DPM2D::getRigidPhi() {
   double phi = double(thrust::reduce(d_a0.begin(), d_a0.end(), double(0), thrust::plus<double>()));
-  return phi / (d_boxSize[0] * d_boxSize[1]);
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::roundBox:
+    return phi / (PI * boxRadius * boxRadius);
+    break;
+    default:
+    return phi / (d_boxSize[0] * d_boxSize[1]);
+    break;
+  }
 }
 
 double DPM2D::getParticlePhi() {
   thrust::device_vector<double> d_radSquared(numParticles);
   thrust::transform(d_particleRad.begin(), d_particleRad.end(), d_radSquared.begin(), square());
-  return thrust::reduce(d_radSquared.begin(), d_radSquared.end(), double(0), thrust::plus<double>()) * PI / (d_boxSize[0] * d_boxSize[1]);
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::roundBox:
+    return thrust::reduce(d_radSquared.begin(), d_radSquared.end(), double(0), thrust::plus<double>()) / (boxRadius * boxRadius);
+    break;
+    default:
+    return thrust::reduce(d_radSquared.begin(), d_radSquared.end(), double(0), thrust::plus<double>()) * PI / (d_boxSize[0] * d_boxSize[1]);
+    break;
+  }
 }
 
 double DPM2D::get3DParticlePhi() {
@@ -1223,7 +1331,14 @@ void DPM2D::checkParticleNeighbors() {
 }
 
 double DPM2D::getDeformableWaveNumber() {
-  return PI / (2. * sqrt(d_boxSize[0] * d_boxSize[1] * getPreferredPhi() / (PI * numParticles)));
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::roundBox:
+    return PI / (2. * sqrt(boxRadius * boxRadius * getPreferredPhi() / numParticles));
+    break;
+    default:
+    return PI / (2. * sqrt(d_boxSize[0] * d_boxSize[1] * getPreferredPhi() / (PI * numParticles)));
+    break;
+  }
 }
 
 double DPM2D::getRigidWaveNumber() {
@@ -1232,7 +1347,14 @@ double DPM2D::getRigidWaveNumber() {
 
 double DPM2D::getSoftWaveNumber() {
   if(nDim == 2) {
+    switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::roundBox:
+    return PI / (2. * sqrt(boxRadius * boxRadius * getParticlePhi() / numParticles));
+    break;
+    default:
     return PI / (2. * sqrt(d_boxSize[0] * d_boxSize[1] * getParticlePhi() / (PI * numParticles)));
+    break;
+    }
   } else if(nDim == 3) {
     return PI / (2. * sqrt(d_boxSize[0] * d_boxSize[1] * get3DParticlePhi() / (PI * numParticles)));
   } else {
@@ -1321,9 +1443,6 @@ void DPM2D::setPolySizeDistribution(double calA0_, double polyDispersity) {
   initParticleIdList();
   // we changed numVertices so we need to resize variables
   initShapeVariables(numVertices, numParticles);
-  initDynamicalVariables(numVertices);
-  initNeighbors(numVertices);
-  syncNeighborsToDevice();
   for (long particleId = 0; particleId < numParticles; particleId++) {
     numVertexInParticle = d_numVertexInParticleList[particleId];
     d_a0[particleId] = (numVertexInParticle / minVertexInParticle) * (numVertexInParticle / minVertexInParticle);
@@ -1396,7 +1515,7 @@ void DPM2D::setScaledRandomParticles(double phi0, double extraRad_, double lx, d
   double areaSum = 0;
   for (long particleId = 0; particleId < numParticles; particleId++) {
     for(long dim = 0; dim < nDim; dim++) {
-      d_particlePos[particleId * nDim + dim] = d_boxSize[dim] * drand48();
+      d_particlePos[particleId * nDim + dim] = 0.95 * d_boxSize[dim] * drand48(); // 0.95 to avoid edge effects
     }
     d_particleRad[particleId] = extraRad * sqrt((2. * d_a0[particleId]) / (d_numVertexInParticleList[particleId] * sin(2. * PI / d_numVertexInParticleList[particleId])));
     areaSum += PI * d_particleRad[particleId] * d_particleRad[particleId];
@@ -1406,28 +1525,69 @@ void DPM2D::setScaledRandomParticles(double phi0, double extraRad_, double lx, d
   cout << "DPM2D::setScaledRandomParticles: packing fraction: " << getPreferredPhi() << " " << areaSum / (boxSize[0] * boxSize[1]) << endl;
 }
 
+void DPM2D::setRoundScaledRandomParticles(double phi0, double extraRad_, double boxRadius_) {
+  thrust::host_vector<double> boxSize(nDim);
+  double scale, extraRad = extraRad_;
+  boxRadius = boxRadius_;
+  setBoxRadius(boxRadius);
+  scale = sqrt(getPreferredPhi() / phi0);
+  boxRadius = boxRadius_ * scale;
+  setBoxRadius(boxRadius);
+  // extract random positions and radii
+  double areaSum = 0;
+  for (long particleId = 0; particleId < numParticles; particleId++) {
+    double thisR = 0.95 * boxRadius * sqrt(drand48()); // 0.95 to avoid edge effects
+    double thisTheta = 2 * PI  * drand48() - PI;
+    d_particlePos[particleId * nDim] = thisR * cos(thisTheta);
+    d_particlePos[particleId * nDim + 1] = thisR * sin(thisTheta);
+    d_particleRad[particleId] = extraRad * sqrt((2. * d_a0[particleId]) / (d_numVertexInParticleList[particleId] * sin(2. * PI / d_numVertexInParticleList[particleId])));
+    areaSum += PI * d_particleRad[particleId] * d_particleRad[particleId];
+  }
+  // need to set this otherwise forces are zeros
+  setLengthScaleToOne();
+  cout << "DPM2D::setRoundScaledRandomParticles: packing fraction: " << getPreferredPhi() << " " << areaSum / (PI * boxRadius * boxRadius) << endl;
+}
+
 void DPM2D::initVerticesOnParticles() {
   double rad;
   long particleId, numVertexInParticle;
+  initDynamicalVariables(numVertices);
   for (long vertexId = 0; vertexId < numVertices; vertexId++) {
     particleId = d_particleIdList[vertexId];
     numVertexInParticle = d_numVertexInParticleList[particleId];
     rad = sqrt((2. * d_a0[particleId]) / (numVertexInParticle * sin(2. * PI / numVertexInParticle)));
-		d_pos[vertexId * nDim] = rad * cos((2. * PI * vertexId) / numVertexInParticle) + d_particlePos[particleId * nDim];// + 1e-02 * d_l0[vertexId] * drand48();
-		d_pos[vertexId * nDim + 1] = rad * sin((2. * PI * vertexId) / numVertexInParticle) + d_particlePos[particleId * nDim + 1];// + 1e-02 * d_l0[vertexId] * drand48();
+		d_pos[vertexId * nDim] = rad * cos((2. * PI * vertexId) / numVertexInParticle) + d_particlePos[particleId * nDim] + 1e-03 * d_l0[vertexId] * drand48();
+		d_pos[vertexId * nDim + 1] = rad * sin((2. * PI * vertexId) / numVertexInParticle) + d_particlePos[particleId * nDim + 1] + 1e-03 * d_l0[vertexId] * drand48();
   }
+  initNeighbors(numVertices);
+  syncNeighborsToDevice();
 }
 
-void DPM2D::scaleBoxSize(double scale) {
+void DPM2D::scaleBox(double scale) {
   resetParticleLastPositions();
   thrust::transform(d_particlePos.begin(), d_particlePos.end(), thrust::make_constant_iterator(scale), d_particlePos.begin(), thrust::divides<double>());
-  // shift vertex positions accordingly
+  // boxSize
+  double boxRadius_ = 0.;
   thrust::host_vector<double> boxSize_(nDim);
-  boxSize_ = getBoxSize();
-  for (long dim = 0; dim < nDim; dim++) {
-    boxSize_[dim] /= scale;
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::roundBox:
+    boxRadius_ = getBoxRadius();
+    boxRadius_ /= scale;
+    boxRadius = boxRadius_;
+    cudaMemcpyToSymbol(d_boxRadius, &boxRadius, sizeof(boxRadius));
+    break;
+    default:
+    boxSize_ = getBoxSize();
+    for (long dim = 0; dim < nDim; dim++) {
+      boxSize_[dim] /= scale;
+    }
+    d_boxSize = boxSize_;
+    double* boxSize = thrust::raw_pointer_cast(&(d_boxSize[0]));
+    cudaMemcpyToSymbol(d_boxSizePtr, &boxSize, sizeof(boxSize));
+    //setParticleLengthScale();
+    break;
   }
-  setBoxSize(boxSize_);
+  // shift vertex positions accordingly
   translateVertices();
 }
 
@@ -1451,13 +1611,28 @@ void DPM2D::scalePacking(double scale) {
   thrust::transform(d_l0.begin(), d_l0.end(), thrust::make_constant_iterator(scale), d_l0.begin(), thrust::divides<double>());
   thrust::transform(d_a0.begin(), d_a0.end(), thrust::make_constant_iterator(scale * scale), d_a0.begin(), thrust::divides<double>());
   // boxSize
+  double boxRadius_ = 0.;
   thrust::host_vector<double> boxSize_(nDim);
-  boxSize_ = getBoxSize();
-  for (long dim = 0; dim < nDim; dim++) {
-    boxSize_[dim] /= scale;
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::roundBox:
+    boxRadius_ = getBoxRadius();
+    boxRadius_ /= scale;
+    boxRadius = boxRadius_;
+    cudaMemcpyToSymbol(d_boxRadius, &boxRadius, sizeof(boxRadius));
+    cout << "DPM2D::scalePacking: preferred packing fraction: " << getPreferredPhi() << " boxR: " << boxRadius_ << endl;
+    break;
+    default:
+    boxSize_ = getBoxSize();
+    for (long dim = 0; dim < nDim; dim++) {
+      boxSize_[dim] /= scale;
+    }
+    d_boxSize = boxSize_;
+    double* boxSize = thrust::raw_pointer_cast(&(d_boxSize[0]));
+    cudaMemcpyToSymbol(d_boxSizePtr, &boxSize, sizeof(boxSize));
+    cout << "DPM2D::scalePacking: preferred packing fraction: " << getPreferredPhi() << " Lx: " << boxSize_[0] << " Ly: " << boxSize_[1] << endl;
+    //setParticleLengthScale();
+    break;
   }
-  setBoxSize(boxSize_);
-  cout << "DPM2D::scalePacking: preferred packing fraction: " << getPreferredPhi() << " Lx: " << boxSize_[0] << " Ly: " << boxSize_[1] << endl;
 }
 
 void DPM2D::scaleParticlePacking() {
@@ -1473,13 +1648,28 @@ void DPM2D::scaleParticlePacking() {
   thrust::transform(d_l0.begin(), d_l0.end(), thrust::make_constant_iterator(scale), d_l0.begin(), thrust::divides<double>());
   thrust::transform(d_a0.begin(), d_a0.end(), thrust::make_constant_iterator(scale * scale), d_a0.begin(), thrust::divides<double>());
   // boxSize
+  double boxRadius_ = 0.;
   thrust::host_vector<double> boxSize_(nDim);
-  boxSize_ = getBoxSize();
-  for (long dim = 0; dim < nDim; dim++) {
-    boxSize_[dim] /= scale;
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::roundBox:
+    boxRadius_ = getBoxRadius();
+    boxRadius_ /= scale;
+    boxRadius = boxRadius_;
+    cudaMemcpyToSymbol(d_boxRadius, &boxRadius, sizeof(boxRadius));
+    cout << "DPM2D::scaleParticlePacking: preferred packing fraction: " << getPreferredPhi() << " boxR: " << boxRadius_ << endl;
+    break;
+    default:
+    boxSize_ = getBoxSize();
+    for (long dim = 0; dim < nDim; dim++) {
+      boxSize_[dim] /= scale;
+    }
+    d_boxSize = boxSize_;
+    double* boxSize = thrust::raw_pointer_cast(&(d_boxSize[0]));
+    cudaMemcpyToSymbol(d_boxSizePtr, &boxSize, sizeof(boxSize));
+    cout << "DPM2D::scaleParticlePacking: preferred packing fraction: " << getPreferredPhi() << " Lx: " << boxSize_[0] << " Ly: " << boxSize_[1] << endl;
+    //setParticleLengthScale();
+    break;
   }
-  setBoxSize(boxSize_);
-  //cout << "DPM2D::scalePacking: preferred packing fraction: " << getPreferredPhi() << " Lx: " << boxSize_[0] << " Ly: " << boxSize_[1] << endl;
 }
 
 void DPM2D::scaleVertices(double scale) {
@@ -1564,6 +1754,11 @@ void DPM2D::setEnergyCosts(double ea_, double el_, double eb_, double ec_) {
   cudaMemcpyToSymbol(d_el, &el, sizeof(el));
   cudaMemcpyToSymbol(d_eb, &eb, sizeof(eb));
   cudaMemcpyToSymbol(d_ec, &ec, sizeof(ec));
+}
+
+void DPM2D::setBoxEnergyCost(double ew_) {
+  ew = ew_;
+  cudaMemcpyToSymbol(d_ew, &ew, sizeof(ew));
 }
 
 void DPM2D::setAttractionConstants(double l1_, double l2_) {
@@ -1829,7 +2024,6 @@ void DPM2D::calcForceEnergyGPU() {
 	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
   thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
   double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
-  // compute interaction
   switch (simControl.interactionType) {
     case simControlStruct::interactionEnum::vertexVertex:
     kernelCalcVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy);
@@ -1842,6 +2036,20 @@ void DPM2D::calcForceEnergyGPU() {
     break;
     default:
     kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy);
+    break;
+  }
+  double *wForce = thrust::raw_pointer_cast(&d_wallForce[0]);
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::fixedBox:
+    kernelCalcVertexSquareWallInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy, wForce);
+    break;
+    case simControlStruct::geometryEnum::fixedSides:
+    kernelCalcVertexSidesInteraction2D<<<dimGrid, dimBlock>>>(rad, pos, force, energy, wForce);
+    break;
+    case simControlStruct::geometryEnum::roundBox:
+    kernelCalcVertexRoundWallInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy, wForce);
+    break;
+    default:
     break;
   }
 }
@@ -3151,13 +3359,46 @@ void DPM2D::syncParticleNeighborsToDevice() {
 }
 
 //************************* particle functions *******************************//
-void DPM2D::calcParticleForceEnergy() {
-	const double *pRad = thrust::raw_pointer_cast(&d_particleRad[0]);
+void DPM2D::calcParticleInteraction() {
+  const double *pRad = thrust::raw_pointer_cast(&d_particleRad[0]);
 	const double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
 	double *pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
 	double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
-  // compute particle interaction
-  kernelCalcParticleInteraction<<<partDimGrid, dimBlock>>>(pRad, pPos, pForce, pEnergy);
+  kernelCalcParticleInteraction<<<dimGrid, dimBlock>>>(pRad, pPos, pForce, pEnergy);
+}
+
+void DPM2D::calcParticleFixedWallInteraction() {
+  const double *pRad = thrust::raw_pointer_cast(&d_particleRad[0]);
+  const double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
+  double *pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
+  double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
+	double *wForce = thrust::raw_pointer_cast(&d_wallForce[0]);
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::fixedBox:
+    kernelCalcParticleSquareWallInteraction<<<dimGrid, dimBlock>>>(pRad, pPos, pForce, pEnergy, wForce);
+    break;
+    case simControlStruct::geometryEnum::fixedSides:
+    kernelCalcParticleSidesInteraction2D<<<dimGrid, dimBlock>>>(pRad, pPos, pForce, pEnergy, wForce);
+    break;
+    case simControlStruct::geometryEnum::roundBox:
+    kernelCalcParticleRoundWallInteraction<<<dimGrid, dimBlock>>>(pRad, pPos, pForce, pEnergy, wForce);
+    break;
+    default:
+    break;
+  }
+}
+
+void DPM2D::calcParticleForceEnergy() {
+  calcParticleInteraction();
+  switch (simControl.geometryType) {
+    case simControlStruct::geometryEnum::fixedBox:
+    case simControlStruct::geometryEnum::fixedSides:
+    case simControlStruct::geometryEnum::roundBox:
+    calcParticleFixedWallInteraction();
+    break;
+    default:
+    break;
+  }
 }
 
 // return the sum of force magnitudes
@@ -3385,6 +3626,55 @@ void DPM2D::initNVE(double Temp, bool readState) {
 void DPM2D::NVELoop() {
   this->sim_->integrate();
 }
+
+//******************* NVE integrator with velocity rescale *******************//
+void DPM2D::initNVERescale(double Temp) {
+  this->sim_ = new NVERescale(this, SimConfig(Temp, 0, 0));
+  resetLastPositions();
+  d_particleInitPos.resize(numParticles * nDim);
+  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
+  calcParticlePositions();
+  d_particleInitPos = d_particlePos;
+  shift = true;
+  // initialize velocities to desired temperature
+  double noiseVar = sqrt(Temp);
+  thrust::device_vector<double> d_thermalVel(numParticles * nDim);
+  thrust::counting_iterator<long> index_sequence_begin(0);
+  thrust::transform(index_sequence_begin, index_sequence_begin + numParticles * nDim, d_thermalVel.begin(), gaussNum(0.f,noiseVar));
+  long s_nDim(nDim);
+  auto r = thrust::counting_iterator<long>(0);
+  double* vel = thrust::raw_pointer_cast(&d_vel[0]);
+  const double* thermalVel = thrust::raw_pointer_cast(&d_thermalVel[0]);
+  const long* pIdList = thrust::raw_pointer_cast(&d_particleIdList[0]);
+
+  auto injectThermalVel = [=] __device__ (long vertexId) {
+    auto particleId = pIdList[vertexId];
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      vel[vertexId * s_nDim + dim] = thermalVel[particleId * s_nDim + dim];
+    }
+  };
+
+  thrust::for_each(r, r + numVertices, injectThermalVel);
+
+  double scale = sqrt(Temp / getTemperature());
+  r = thrust::counting_iterator<long>(0);
+
+  auto scaleVel = [=] __device__ (long vertexId) {
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      vel[vertexId * s_nDim + dim] *= scale;
+    }
+  };
+
+  thrust::for_each(r, r + numVertices, scaleVel);
+  cout << "DPM2D::initNVERescale:: current temperature: " << setprecision(12) << getTemperature() << endl;
+}
+
+void DPM2D::NVERescaleLoop() {
+  this->sim_->integrate();
+}
+
 
 void DPM2D::initBrownian(double Temp, double gamma, bool readState) {
   this->sim_ = new Brownian(this, SimConfig(Temp, 0, 0));

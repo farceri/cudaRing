@@ -296,6 +296,32 @@ void NVE::injectKineticEnergy() {
   //kernelConserveVertexMomentum<<<1, dpm_->dimBlock>>>(vel);
 }
 
+//********************** nve with velocity rescaling ************************//
+void NVERescale::integrate() {
+  injectKineticEnergy();
+  updateVelocity(0.5 * dpm_->dt);
+  updatePosition(dpm_->dt);
+  dpm_->checkNeighbors();
+  dpm_->calcForceEnergy();
+  updateVelocity(0.5 * dpm_->dt);
+}
+
+void NVERescale::injectKineticEnergy() {
+  double scale = sqrt(config.Tinject / dpm_->getTemperature());
+  long s_nDim(dpm_->nDim);
+  auto r = thrust::counting_iterator<long>(0);
+	double* vel = thrust::raw_pointer_cast(&(dpm_->d_vel[0]));
+
+  auto scaleVel = [=] __device__ (long vId) {
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      vel[vId * s_nDim + dim] *= scale;
+    }
+  };
+
+  thrust::for_each(r, r + dpm_->numVertices, scaleVel);
+}
+
 //******************************** brownian **********************************//
 void Brownian::integrate() {
   updateVelocity(dpm_->dt);

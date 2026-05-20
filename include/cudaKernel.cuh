@@ -18,6 +18,10 @@ __constant__ simControlStruct d_simControl;
 
 __constant__ double* d_boxSizePtr;
 
+// wall variables
+__constant__ double d_boxRadius;
+__constant__ double d_ew;
+
 __constant__ long d_nDim;
 __constant__ long d_numParticles;
 __constant__ long d_numVertexPerParticle;
@@ -66,6 +70,38 @@ inline __device__ double pbcDistance(const double x1, const double x2, const lon
 	return delta - size * round(delta / size); //round for distance, floor for position
 }
 
+inline __device__ double boxDistance(const double x1, const double x2, const long dim) {
+	switch (d_simControl.geometryType) {
+		case simControlStruct::geometryEnum::normal:
+		return pbcDistance(x1, x2, dim);
+		case simControlStruct::geometryEnum::fixedBox:
+		return (x1 - x2);
+		break;
+		case simControlStruct::geometryEnum::fixedSides:
+		if (dim == 0) {
+			return pbcDistance(x1, x2, dim);
+		} else {
+			return (x1 - x2);
+		}
+		break;
+		case simControlStruct::geometryEnum::roundBox:
+		return (x1 - x2);
+		break;
+	}
+}
+
+inline __device__ void cartesianToPolar(const double* vec, double &r, double &theta) {
+    // Compute radial distance and angle wrt the origin
+    r = sqrt(vec[0] * vec[0] + vec[1] * vec[1]);
+    theta = atan2(vec[1], vec[0]);
+}
+
+inline __device__ void polarToCartesian(double* vec, const double r, const double theta) {
+    // Compute cartesian coordinates from radial distance and angle
+	vec[0] = r * cos(theta);
+	vec[1] = r * sin(theta);
+}
+
 inline __device__ double calcNorm(const double* segment) {
   	auto normSq = 0.0;
   	for (long dim = 0; dim < d_nDim; dim++) {
@@ -85,35 +121,82 @@ inline __device__ double calcNormSq(const double* segment) {
 inline __device__ double calcDistance(const double* thisVec, const double* otherVec) {
   	auto delta = 0.0;
 	auto distanceSq = 0.0;
-	#pragma unroll (MAXDIM)
-  	for (long dim = 0; dim < d_nDim; dim++) {
-    	delta = pbcDistance(thisVec[dim], otherVec[dim], dim);
-    	distanceSq += delta * delta;
-  	}
-  	return sqrt(distanceSq);
+  	//double r1, theta1, r2, theta2;
+  	switch (d_simControl.geometryType) {
+		case simControlStruct::geometryEnum::normal:
+		#pragma unroll (MAXDIM)
+		for (long dim = 0; dim < d_nDim; dim++) {
+			delta = pbcDistance(thisVec[dim], otherVec[dim], dim);
+			distanceSq += delta * delta;
+		}
+		return sqrt(distanceSq);
+		break;
+		case simControlStruct::geometryEnum::fixedBox:
+		#pragma unroll (MAXDIM)
+		for (long dim = 0; dim < d_nDim; dim++) {
+			delta = thisVec[dim] - otherVec[dim];
+			distanceSq += delta * delta;
+		}
+		return sqrt(distanceSq);
+		break;
+		case simControlStruct::geometryEnum::fixedSides:
+		delta = thisVec[1] - otherVec[1];
+		distanceSq = delta * delta;
+		delta = pbcDistance(thisVec[0], otherVec[0], 0);
+		distanceSq += delta * delta;
+		return sqrt(distanceSq);
+		break;
+		case simControlStruct::geometryEnum::roundBox:
+		#pragma unroll (MAXDIM)
+		for (long dim = 0; dim < d_nDim; dim++) {
+			delta = thisVec[dim] - otherVec[dim];
+			distanceSq += delta * delta;
+		}
+		return sqrt(distanceSq);
+		break;
+	}
 }
 
 inline __device__ double calcDeltaAndDistance(const double* thisVec, const double* otherVec, double* deltaVec) {
 	auto delta = 0.0;
 	auto distanceSq = 0.0;
-	#pragma unroll (MAXDIM)
-  	for (long dim = 0; dim < d_nDim; dim++) {
-    	delta = pbcDistance(thisVec[dim], otherVec[dim], dim);
-		deltaVec[dim] = delta;
-    	distanceSq += delta * delta;
-  	}
-  	return sqrt(distanceSq);
-}
-
-inline __device__ double calcFixedBoundaryDistance(const double* thisVec, const double* otherVec) {
-  	auto delta = 0.0;
-	auto distanceSq = 0.0;
-	#pragma unroll (MAXDIM)
-  	for (long dim = 0; dim < d_nDim; dim++) {
-    	delta = thisVec[dim] - otherVec[dim];
-    	distanceSq += delta * delta;
-  	}
-  	return sqrt(distanceSq);
+  	//double r1, theta1, r2, theta2, deltaR, deltaTheta;
+	switch (d_simControl.geometryType) {
+		case simControlStruct::geometryEnum::normal:
+		#pragma unroll (MAXDIM)
+	  	for (long dim = 0; dim < d_nDim; dim++) {
+	    	delta = pbcDistance(thisVec[dim], otherVec[dim], dim);
+			deltaVec[dim] = delta;
+	    	distanceSq += delta * delta;
+	 	}
+		return sqrt(distanceSq);
+		break;
+		case simControlStruct::geometryEnum::fixedBox:
+		#pragma unroll (MAXDIM)
+		for (long dim = 0; dim < d_nDim; dim++) {
+			delta = thisVec[dim] - otherVec[dim];
+			deltaVec[dim] = delta;
+			distanceSq += delta * delta;
+		}
+		return sqrt(distanceSq);
+		break;
+		case simControlStruct::geometryEnum::fixedSides:
+		deltaVec[1] = thisVec[1] - otherVec[1];
+		distanceSq = deltaVec[1] * deltaVec[1];
+		deltaVec[0] = pbcDistance(thisVec[0], otherVec[0], 0);
+		distanceSq += deltaVec[0] * deltaVec[0];
+		return sqrt(distanceSq);
+		break;
+		case simControlStruct::geometryEnum::roundBox:
+		#pragma unroll (MAXDIM)
+		for (long dim = 0; dim < d_nDim; dim++) {
+			delta = thisVec[dim] - otherVec[dim];
+			deltaVec[dim] = delta;
+			distanceSq += delta * delta;
+		}
+		return sqrt(distanceSq);
+		break;
+	}
 }
 
 inline __device__ void getSegment(const double* thisVec, const double* otherVec, double* segment) {
@@ -126,7 +209,7 @@ inline __device__ void getSegment(const double* thisVec, const double* otherVec,
 inline __device__ void getDelta(const double* thisVec, const double* otherVec, double* delta) {
 	#pragma unroll (MAXDIM)
   	for (long dim = 0; dim < d_nDim; dim++) {
-    	delta[dim] = pbcDistance(thisVec[dim], otherVec[dim], dim);
+    	delta[dim] = boxDistance(thisVec[dim], otherVec[dim], dim);
   	}
 }
 
@@ -188,7 +271,7 @@ inline __device__ void getRelativeVertexPos(const long vId, const double* pos, d
 	getVertexPos(vId, pos, vPos);
 	#pragma unroll (MAXDIM)
   	for (long dim = 0; dim < d_nDim; dim++) {
-    	vPos[dim] = pbcDistance(vPos[dim], partPos[dim], dim);
+    	vPos[dim] = boxDistance(vPos[dim], partPos[dim], dim);
   	}
 }
 
@@ -282,7 +365,7 @@ inline __device__ void calcParticlePos(const long particleId, const double* pos,
 		nextId = getNextId(currentId, particleId);
 		#pragma unroll (MAXDIM)
 		for (long dim = 0; dim < d_nDim; dim++) {
-			delta[dim] = pbcDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
+			delta[dim] = boxDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
 			currentPos[dim] += delta[dim];
 			partPos[dim] += currentPos[dim];
 		}
@@ -305,7 +388,7 @@ inline __device__ double getParticleArea(const long particleId, const double* po
 		nextId = getNextId(currentId, particleId);
 		#pragma unroll (MAXDIM)
 		for (long dim = 0; dim < d_nDim; dim++) {
-			delta[dim] = pbcDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
+			delta[dim] = boxDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
 			nextPos[dim] = currentPos[dim] + delta[dim];
 		}
 		tempArea += currentPos[0] * nextPos[1] - nextPos[0] * currentPos[1];
@@ -319,10 +402,6 @@ inline __device__ double getParticleArea(const long particleId, const double* po
 
 inline __device__ double calcOverlap(const double* thisVec, const double* otherVec, const double radSum) {
   	return (1 - calcDistance(thisVec, otherVec) / radSum);
-}
-
-inline __device__ double calcFixedBoundaryOverlap(const double* thisVec, const double* otherVec, const double radSum) {
-  	return (1 - calcFixedBoundaryDistance(thisVec, otherVec) / radSum);
 }
 
 inline __device__ void getNormalVector(const double* thisVec, double* normalVec) {
@@ -769,7 +848,7 @@ inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const 
 
 // clockwise projection
 inline __device__ double getProjection(const double* thisPos, const double* otherPos, const double* previousPos, const double length) {
-	return (pbcDistance(thisPos[0], previousPos[0], 0) * pbcDistance(otherPos[0], previousPos[0], 0) + pbcDistance(thisPos[1], previousPos[1], 1) * pbcDistance(otherPos[1], previousPos[1], 1)) / (length * length);
+	return (boxDistance(thisPos[0], previousPos[0], 0) * boxDistance(otherPos[0], previousPos[0], 0) + boxDistance(thisPos[1], previousPos[1], 1) * boxDistance(otherPos[1], previousPos[1], 1)) / (length * length);
 
 }
 
@@ -781,7 +860,7 @@ inline __device__ void getProjectionPos(const double* previousPos, const double*
 }
 
 inline __device__ double calcCross(const double* thisPos, const double* otherPos, const double* previousPos) {
-	return pbcDistance(previousPos[0], otherPos[0],0) * pbcDistance(otherPos[1], thisPos[1],1) - pbcDistance(otherPos[0], thisPos[0],0) * pbcDistance(previousPos[1], otherPos[1],1);
+	return boxDistance(previousPos[0], otherPos[0],0) * boxDistance(otherPos[1], thisPos[1],1) - boxDistance(otherPos[0], thisPos[0],0) * boxDistance(previousPos[1], otherPos[1],1);
 }
 
 inline __device__ double calcVertexSegmentInteraction(const double* thisPos, const double* projPos, const double* otherPos, const double* previousPos, const double length, const double radSum, double* thisForce, double* otherForce, double* previousForce) {
@@ -793,14 +872,14 @@ inline __device__ double calcVertexSegmentInteraction(const double* thisPos, con
 		auto absCross = fabs(cross);
 		auto sign = cross / absCross;
 		// this vertex
-	  	atomicAdd(&thisForce[0], gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], 1) / length);
-	  	atomicAdd(&thisForce[1], gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], 0) / length);
+	  	atomicAdd(&thisForce[0], gradMultiple * sign * boxDistance(previousPos[1], otherPos[1], 1) / length);
+	  	atomicAdd(&thisForce[1], gradMultiple * sign * boxDistance(otherPos[0], previousPos[0], 0) / length);
 		// other vertex
-	  	atomicAdd(&otherForce[0], gradMultiple * (sign * pbcDistance(thisPos[1], previousPos[1], 1) + absCross * pbcDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length);
-	  	atomicAdd(&otherForce[1], gradMultiple * (sign * pbcDistance(previousPos[0], thisPos[0], 0) + absCross * pbcDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length);
+	  	atomicAdd(&otherForce[0], gradMultiple * (sign * boxDistance(thisPos[1], previousPos[1], 1) + absCross * boxDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length);
+	  	atomicAdd(&otherForce[1], gradMultiple * (sign * boxDistance(previousPos[0], thisPos[0], 0) + absCross * boxDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length);
 		// previous vertex
-	  	atomicAdd(&previousForce[0], gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], 1) - absCross * pbcDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length);
-	  	atomicAdd(&previousForce[1], gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], 0) - absCross * pbcDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length);
+	  	atomicAdd(&previousForce[0], gradMultiple * (sign * boxDistance(otherPos[1], thisPos[1], 1) - absCross * boxDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length);
+	  	atomicAdd(&previousForce[1], gradMultiple * (sign * boxDistance(thisPos[0], otherPos[0], 0) - absCross * boxDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length);
 	  	return epot;
 	}
 	return 0.;
@@ -910,8 +989,8 @@ inline __device__ double calcSegmentInteraction(const double* thisPos, const dou
 	if (gradMultiple != 0) {
 		auto sign = cross / absCross;
 		// this vertex
-	  	thisForce[0] += gradMultiple * sign * pbcDistance(previousPos[1], otherPos[1], 1) / length;
-	  	thisForce[1] += gradMultiple * sign * pbcDistance(otherPos[0], previousPos[0], 0) / length;
+	  	thisForce[0] += gradMultiple * sign * boxDistance(previousPos[1], otherPos[1], 1) / length;
+	  	thisForce[1] += gradMultiple * sign * boxDistance(otherPos[0], previousPos[0], 0) / length;
 		return epot;
 	}
 	return 0.;
@@ -929,8 +1008,8 @@ inline __device__ double calcSegment1Interaction(const double* thisPos, const do
 	if (gradMultiple != 0) {
 		auto sign = cross / absCross;
 		// other vertex
-	  	otherForce[0] += gradMultiple * (sign * pbcDistance(thisPos[1], previousPos[1], 1) + absCross * pbcDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length;
-	  	otherForce[1] += gradMultiple * (sign * pbcDistance(previousPos[0], thisPos[0], 0) + absCross * pbcDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length;
+	  	otherForce[0] += gradMultiple * (sign * boxDistance(thisPos[1], previousPos[1], 1) + absCross * boxDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length;
+	  	otherForce[1] += gradMultiple * (sign * boxDistance(previousPos[0], thisPos[0], 0) + absCross * boxDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length;
 		return epot;
 	}
 	return 0.;
@@ -949,8 +1028,8 @@ inline __device__ double calcSegment2Interaction(const double* thisPos, const do
 	if (gradMultiple != 0) {
 		auto sign = cross / absCross;
 		// previous vertex
-	  	previousForce[0] += gradMultiple * (sign * pbcDistance(otherPos[1], thisPos[1], 1) - absCross * pbcDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length;
-	  	previousForce[1] += gradMultiple * (sign * pbcDistance(thisPos[0], otherPos[0], 0) - absCross * pbcDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length;
+	  	previousForce[0] += gradMultiple * (sign * boxDistance(otherPos[1], thisPos[1], 1) - absCross * boxDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length;
+	  	previousForce[1] += gradMultiple * (sign * boxDistance(thisPos[0], otherPos[0], 0) - absCross * boxDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length;
 	  	return epot;
 	}
 	return 0.;
@@ -958,7 +1037,7 @@ inline __device__ double calcSegment2Interaction(const double* thisPos, const do
 
 inline __device__ double getProjection2(const double* thisPos, const double* otherPos, const double* previousPos, const double* segment) {
 	auto length = calcNorm(segment);
-	return (pbcDistance(previousPos[0], otherPos[0], 0) * pbcDistance(previousPos[0], thisPos[0], 0) + pbcDistance(previousPos[1], otherPos[1], 1) * pbcDistance(previousPos[1], thisPos[1], 1)) / (length * length);
+	return (boxDistance(previousPos[0], otherPos[0], 0) * boxDistance(previousPos[0], thisPos[0], 0) + boxDistance(previousPos[1], otherPos[1], 1) * boxDistance(previousPos[1], thisPos[1], 1)) / (length * length);
 }
 
 // interaction force between vertices fully computed in parallel (work in progress)
@@ -1128,6 +1207,197 @@ __global__ void kernelCalcParticleInteraction(const double* pRad, const double* 
   	}
 }
 
+inline __device__ double calcWallWCAInteraction(const double* thisPos, const double* wallPos, const double radSum, double* currentForce, double* wallForce) {
+	double delta[MAXDIM];
+	auto distance = calcDeltaAndDistance(thisPos, wallPos, delta);
+	auto ratio = radSum / distance;
+	auto ratio6 = pow(ratio, 6);
+	auto ratio12 = ratio6 * ratio6;
+	if (distance < (WCAcut * radSum)) {
+		auto gradMultiple = 24 * d_ew * (2 * ratio12 - ratio6) / distance;
+		#pragma unroll (MAXDIM)
+		for (long dim = 0; dim < d_nDim; dim++) {
+	    	currentForce[dim] += gradMultiple * delta[dim] / distance;
+			wallForce[dim] -= gradMultiple * delta[dim] / distance;
+	  	}
+	  	return d_ew * (4 * (ratio12 - ratio6) + 1);
+	}
+	return 0.0;
+}
+
+// particle-box contact interaction in rectangular boundary
+__global__ void kernelCalcParticleSquareWallInteraction(const double* pRad, const double* pPos, double* pForce, double* pEnergy, double* wForce) {
+	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
+	if (particleId < d_numParticles) {
+		double thisPos[MAXDIM], wallPos[MAXDIM];
+		// we don't zero out the force and the energy because this function always
+		// gets called after the particle-particle interaction is computed
+		getParticlePos(particleId, pPos, thisPos);
+		auto thisRad = pRad[particleId];
+		auto radSum = thisRad;
+		for (long dim = 0; dim < d_nDim; dim++) {
+			wForce[particleId*d_nDim + dim] = 0.;
+		}
+		// check if particle is close to the wall at a distance less than its radius
+		if(thisPos[0] < (WCAcut * radSum)) {
+			wallPos[0] = 0;
+			wallPos[1] = thisPos[1];
+			pEnergy[particleId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &pForce[particleId*d_nDim], &wForce[particleId*d_nDim]);
+		} else if((d_boxSizePtr[0] - thisPos[0]) < (WCAcut * radSum)) {
+			wallPos[0] = d_boxSizePtr[0];
+			wallPos[1] = thisPos[1];
+			pEnergy[particleId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &pForce[particleId*d_nDim], &wForce[particleId*d_nDim]);
+		}
+		if(thisPos[1] < (WCAcut * radSum)) {
+			wallPos[1] = 0;
+			wallPos[0] = thisPos[0];
+			pEnergy[particleId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &pForce[particleId*d_nDim], &wForce[particleId*d_nDim]);
+		} else if((d_boxSizePtr[1] - thisPos[1]) < (WCAcut * radSum)) {
+			wallPos[1] = d_boxSizePtr[1];
+			wallPos[0] = thisPos[0];
+			pEnergy[particleId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &pForce[particleId*d_nDim], &wForce[particleId*d_nDim]);
+		}
+	}
+}
+
+// particle-sides contact interaction in 2D
+__global__ void kernelCalcParticleSidesInteraction2D(const double* pRad, const double* pPos, double* pForce, double* pEnergy, double* wForce) {
+	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
+	if (particleId < d_numParticles) {
+		double thisPos[MAXDIM], wallPos[MAXDIM];
+		// we don't zero out the force and the energy because this function always
+		// gets called after the particle-particle interaction is computed
+		getParticlePos(particleId, pPos, thisPos);
+		auto thisRad = pRad[particleId];
+		auto radSum = thisRad;
+		for (long dim = 0; dim < d_nDim; dim++) {
+			wForce[particleId*d_nDim + dim] = 0.;
+		}
+		// check if particle is close to the wall at a distance less than its radius
+		if(thisPos[1] < (WCAcut * radSum)) {
+			wallPos[1] = 0;
+			wallPos[0] = thisPos[0];
+			pEnergy[particleId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &pForce[particleId*d_nDim], &wForce[particleId*d_nDim]);
+		} else if((d_boxSizePtr[1] - thisPos[1]) < (WCAcut * radSum)) {
+			wallPos[1] = d_boxSizePtr[1];
+			wallPos[0] = thisPos[0];
+			pEnergy[particleId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &pForce[particleId*d_nDim], &wForce[particleId*d_nDim]);
+		}
+	}
+}
+
+// particle-box contact interaction in circular boundary - the center of the simulation box is assumed to be the origin
+__global__ void kernelCalcParticleRoundWallInteraction(const double* pRad, const double* pPos, double* pForce, double* pEnergy, double* wForce) {
+	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
+	if (particleId < d_numParticles) {
+		double thisPos[MAXDIM], wallPos[MAXDIM];
+		// we don't zero out the force and the energy because this function always
+		// gets called after the particle-particle interaction is computed
+		getParticlePos(particleId, pPos, thisPos);
+		auto thisRad = pRad[particleId];
+		auto radSum = thisRad;
+		for (long dim = 0; dim < d_nDim; dim++) {
+			wForce[particleId * d_nDim + dim] = 0.;
+		}
+		// check if particle is far from the origin more than the box radius R minus the particle radius
+		double thisR, thisTheta;
+		cartesianToPolar(thisPos, thisR, thisTheta);
+		if((d_boxRadius - thisR) < (WCAcut * radSum)) {
+			//printf("particleId %ld \t r %lf \t theta %lf x %lf y %lf \n", particleId, thisR, thisTheta, thisPos[0], thisPos[1]);
+			wallPos[0] = d_boxRadius * cos(thisTheta);
+			wallPos[1] = d_boxRadius * sin(thisTheta);
+			pEnergy[particleId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &pForce[particleId*d_nDim], &wForce[particleId*d_nDim]);
+		}
+	}
+}
+
+// particle-box contact interaction in rectangular boundary
+__global__ void kernelCalcVertexSquareWallInteraction(const double* rad, const double* pos, double* force, double* energy, double* wForce) {
+	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
+	if (vertexId < d_numVertices) {
+		double thisPos[MAXDIM], wallPos[MAXDIM];
+		// we don't zero out the force and the energy because this function always
+		// gets called after the particle-particle interaction is computed
+		getVertexPos(vertexId, pos, thisPos);
+		auto thisRad = rad[vertexId];
+		auto radSum = thisRad;
+		for (long dim = 0; dim < d_nDim; dim++) {
+			wForce[vertexId*d_nDim + dim] = 0.;
+		}
+		// check if particle is close to the wall at a distance less than its radius
+		if(thisPos[0] < (WCAcut * radSum)) {
+			wallPos[0] = 0;
+			wallPos[1] = thisPos[1];
+			energy[vertexId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &force[vertexId*d_nDim], &wForce[vertexId*d_nDim]);
+		} else if((d_boxSizePtr[0] - thisPos[0]) < (WCAcut * radSum)) {
+			wallPos[0] = d_boxSizePtr[0];
+			wallPos[1] = thisPos[1];
+			energy[vertexId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &force[vertexId*d_nDim], &wForce[vertexId*d_nDim]);
+		}
+		if(thisPos[1] < (WCAcut * radSum)) {
+			wallPos[1] = 0;
+			wallPos[0] = thisPos[0];
+			energy[vertexId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &force[vertexId*d_nDim], &wForce[vertexId*d_nDim]);
+		} else if((d_boxSizePtr[1] - thisPos[1]) < (WCAcut * radSum)) {
+			wallPos[1] = d_boxSizePtr[1];
+			wallPos[0] = thisPos[0];
+			energy[vertexId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &force[vertexId*d_nDim], &wForce[vertexId*d_nDim]);
+		}
+	}
+}
+
+// particle-sides contact interaction in 2D
+__global__ void kernelCalcVertexSidesInteraction2D(const double* rad, const double* pos, double* force, double* energy, double* wForce) {
+	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
+	if (vertexId < d_numVertices) {
+		double thisPos[MAXDIM], wallPos[MAXDIM];
+		// we don't zero out the force and the energy because this function always
+		// gets called after the particle-particle interaction is computed
+		getVertexPos(vertexId, pos, thisPos);
+		auto thisRad = rad[vertexId];
+		auto radSum = thisRad;
+		for (long dim = 0; dim < d_nDim; dim++) {
+			wForce[vertexId*d_nDim + dim] = 0.;
+		}
+		// check if particle is close to the wall at a distance less than its radius
+		if(thisPos[1] < (WCAcut * radSum)) {
+			wallPos[1] = 0;
+			wallPos[0] = thisPos[0];
+			energy[vertexId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &force[vertexId*d_nDim], &wForce[vertexId*d_nDim]);
+		} else if((d_boxSizePtr[1] - thisPos[1]) < (WCAcut * radSum)) {
+			wallPos[1] = d_boxSizePtr[1];
+			wallPos[0] = thisPos[0];
+			energy[vertexId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &force[vertexId*d_nDim], &wForce[vertexId*d_nDim]);
+		}
+	}
+}
+
+// particle-box contact interaction in circular boundary - the center of the simulation box is assumed to be the origin
+__global__ void kernelCalcVertexRoundWallInteraction(const double* rad, const double* pos, double* force, double* energy, double* wForce) {
+	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
+	if (vertexId < d_numVertices) {
+		double thisPos[MAXDIM], wallPos[MAXDIM];
+		// we don't zero out the force and the energy because this function always
+		// gets called after the particle-particle interaction is computed
+		getVertexPos(vertexId, pos, thisPos);
+		auto thisRad = rad[vertexId];
+		auto radSum = thisRad;
+		for (long dim = 0; dim < d_nDim; dim++) {
+			wForce[vertexId * d_nDim + dim] = 0.;
+		}
+		// check if particle is far from the origin more than the box radius R minus the particle radius
+		double thisR, thisTheta;
+		cartesianToPolar(thisPos, thisR, thisTheta);
+		if((d_boxRadius - thisR) < (WCAcut * radSum)) {
+			//printf("vertexId %ld \t r %lf \t theta %lf x %lf y %lf \n", vertexId, thisR, thisTheta, thisPos[0], thisPos[1]);
+			wallPos[0] = d_boxRadius * cos(thisTheta);
+			wallPos[1] = d_boxRadius * sin(thisTheta);
+			energy[vertexId] += calcWallWCAInteraction(thisPos, wallPos, radSum, &force[vertexId*d_nDim], &wForce[vertexId*d_nDim]);
+			//printf("vertexId %ld \t force x %lf y %lf \n", vertexId, wForce[vertexId*d_nDim], wForce[vertexId*d_nDim + 1]);
+		}
+	}
+}
+
 __global__ void kernelCalcVertexForceTorque(const double* rad, const double* pos, const double* pPos, double* force, double* torque, double* energy) {
   	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
@@ -1269,7 +1539,7 @@ __global__ void kernelCalcPerParticleStressTensor(const double* rad, const doubl
 						gradMultiple = d_ec * overlap / radSum;
 						distance = calcDistance(thisPos, otherPos);
 						for (long dim = 0; dim < d_nDim; dim++) {
-							delta[dim] = pbcDistance(otherPos[dim], thisPos[dim], dim);
+							delta[dim] = boxDistance(otherPos[dim], thisPos[dim], dim);
 							forces[dim] = gradMultiple * delta[dim] / (distance * radSum);
 							relativePos[dim] += delta[dim] * 0.5; // distance from center of mass to contact location
 						}
@@ -1304,10 +1574,10 @@ __global__ void kernelCalcParticleShape(const double* pos, double* length, doubl
 			previousId = getPreviousId(currentId, particleId); // added
 			segmentLength = 0.0;
 			for (long dim = 0; dim < d_nDim; dim++) {
-				delta[dim] = pbcDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
+				delta[dim] = boxDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
 				nextPos[dim] = currentPos[dim] + delta[dim];
 				segmentLength += delta[dim] * delta[dim];
-				delta[dim] = pbcDistance(pos[previousId * d_nDim + dim], currentPos[dim], dim); // added
+				delta[dim] = boxDistance(pos[previousId * d_nDim + dim], currentPos[dim], dim); // added
 				previousPos[dim] = currentPos[dim] + delta[dim]; // added + because previous is already before current (on a line delta is already negative)
 			}
 			getSegment(nextPos, currentPos, nextSegment);
@@ -1347,7 +1617,7 @@ __global__ void kernelScaleVertexPositions(const double* particlePos, double* po
 		auto lastVertex = firstVertex + d_numVertexInParticleListPtr[particleId];
 		for (long vertexId = firstVertex; vertexId < lastVertex; vertexId++) {
 			for (long dim = 0; dim < d_nDim; dim++) {
-				//distance[dim] = pbcDistance(pos[vertexId * d_nDim + dim], particlePos[particleId * d_nDim + dim], d_boxSizePtr[dim]);
+				//distance[dim] = boxDistance(pos[vertexId * d_nDim + dim], particlePos[particleId * d_nDim + dim], d_boxSizePtr[dim]);
 				distance[dim] = pos[vertexId * d_nDim + dim] - particlePos[particleId * d_nDim + dim];
       			pos[vertexId * d_nDim + dim] += (scale - 1) * distance[dim];
 			}
@@ -1586,7 +1856,7 @@ __global__ void kernelCalcNeighborForces(const double* pos, const double *rad, d
 				gradMultiple = (overlap > 0) * d_ec * overlap / radSum;
 				distance = calcDistance(thisPos, otherPos);
 			  	for (long dim = 0; dim < d_nDim; dim++) {
-			    	neighforce[vertexId*d_neighborListSize + nListId*d_nDim+dim] += gradMultiple * pbcDistance(thisPos[dim], otherPos[dim], dim) / distance;
+			    	neighforce[vertexId*d_neighborListSize + nListId*d_nDim+dim] += gradMultiple * boxDistance(thisPos[dim], otherPos[dim], dim) / distance;
 				}
 			}
     	}

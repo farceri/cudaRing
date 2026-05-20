@@ -152,6 +152,22 @@ public:
     outputFile.close();
   }
 
+  double read0DFile(string fileName) {
+    double data;
+    this->openInputFile(fileName);
+    string inputString;
+    getline(inputFile, inputString);
+    sscanf(inputString.c_str(), "%lf", &data);
+    inputFile.close();
+    return data;
+  }
+
+  void save0DFile(string fileName, double data) {
+    this->openOutputFile(fileName);
+    outputFile << setprecision(precision) << data << endl;
+    outputFile.close();
+  }
+
   thrust::host_vector<double> read1DFile(string fileName, long numRows) {
     thrust::host_vector<double> data;
     this->openInputFile(fileName);
@@ -275,8 +291,6 @@ public:
     thrust::host_vector<double> l0_(numVertices_);
     thrust::host_vector<double> theta0_(numVertices_);
 
-    boxSize_ = read1DFile(dirName + "boxSize.dat", nDim_);
-    dpm_->setBoxSize(boxSize_);
     pos_ = read2DFile(dirName + "positions.dat", numVertices_);
     dpm_->setVertexPositions(pos_);
     rad_ = read1DFile(dirName + "radii.dat", numVertices_);
@@ -289,7 +303,23 @@ public:
     dpm_->setRestAngles(theta0_);
     // set length scales
     dpm_->setLengthScale();
-    cout << "FileIO::readPackingFromDirectory: preferred phi: " << dpm_->getPreferredPhi() << " box-Lx: " << boxSize_[0] << ", Ly: " << boxSize_[1] << endl;
+    // set box dimensions
+    double boxRadius_ = 0.;
+    switch (dpm_->simControl.geometryType) {
+      case simControlStruct::geometryEnum::roundBox:
+      boxRadius_ = read0DFile(dirName + "boxSize.dat");
+      dpm_->setBoxRadius(boxRadius_);
+      boxRadius_ = dpm_->getBoxRadius();
+      cout << "FileIO::readParticlePackingFromDirectory: phi: " << dpm_->getPreferredPhi() << " boxRadius: " << boxRadius_ << endl;
+      break;
+      default:
+      thrust::host_vector<double> boxSize_(nDim_);
+      boxSize_ = read1DFile(dirName + "boxSize.dat", nDim_);
+      dpm_->setBoxSize(boxSize_);
+      boxSize_ = dpm_->getBoxSize();
+      cout << "FileIO::readPackingFromDirectory: preferred phi: " << dpm_->getPreferredPhi() << " box-Lx: " << boxSize_[0] << ", Ly: " << boxSize_[1] << endl;
+      break;
+    }
     dpm_->calcParticleShape();
   }
 
@@ -314,9 +344,7 @@ public:
     thrust::host_vector<double> particleRad_(numParticles_);
     thrust::host_vector<double> particlePos_(numParticles_);
     thrust::host_vector<double> particleAngles_(numParticles_);
-
-    boxSize_ = read1DFile(dirName + "boxSize.dat", nDim_);
-    dpm_->setBoxSize(boxSize_);
+    
     pos_ = read2DFile(dirName + "positions.dat", numVertices_);
     dpm_->setVertexPositions(pos_);
     rad_ = read1DFile(dirName + "radii.dat", numVertices_);
@@ -331,7 +359,23 @@ public:
     dpm_->setParticleAngles(particleAngles_);
     // set length scales
     dpm_->setLengthScaleToOne();
-    cout << "FileIO::readRigidPackingFromDirectory: phi: " << dpm_->getPreferredPhi() << endl;
+    // set box dimensions
+    double boxRadius_ = 0.;
+    switch (dpm_->simControl.geometryType) {
+      case simControlStruct::geometryEnum::roundBox:
+      boxRadius_ = read0DFile(dirName + "boxSize.dat");
+      dpm_->setBoxRadius(boxRadius_);
+      boxRadius_ = dpm_->getBoxRadius();
+      cout << "FileIO::readParticlePackingFromDirectory: phi: " << dpm_->getPreferredPhi() << " boxRadius: " << boxRadius_ << endl;
+      break;
+      default:
+      thrust::host_vector<double> boxSize_(nDim_);
+      boxSize_ = read1DFile(dirName + "boxSize.dat", nDim_);
+      dpm_->setBoxSize(boxSize_);
+      boxSize_ = dpm_->getBoxSize();
+      cout << "FileIO::readPackingFromDirectory: preferred phi: " << dpm_->getPreferredPhi() << " box-Lx: " << boxSize_[0] << ", Ly: " << boxSize_[1] << endl;
+      break;
+    }
   }
 
   void savePacking(string dirName) {
@@ -339,6 +383,18 @@ public:
       saveDeformablePacking(dirName);
     } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::rigid) {
       saveRigidPacking(dirName);
+    }
+    // save box
+    double boxRadius_ = 0.;
+    long nDim = dpm_->getNDim();
+    switch (dpm_->simControl.geometryType) {
+      case simControlStruct::geometryEnum::roundBox:
+      boxRadius_ = dpm_->getBoxRadius();
+      save0DFile(dirName + "boxSize.dat", boxRadius_);
+      break;
+      default:
+      save1DFile(dirName + "boxSize.dat", dpm_->getBoxSize());
+      break;
     }
   }
 
@@ -359,7 +415,6 @@ public:
     saveParams << "temperature" << "\t" << dpm_->getTemperature() << endl;
     saveParams.close();
     // save vectors
-    save1DFile(dirName + "boxSize.dat", dpm_->getBoxSize());
     save1DIndexFile(dirName + "numVertexInParticleList.dat", dpm_->getNumVertexInParticleList());
     save1DFile(dirName + "radii.dat", dpm_->getVertexRadii());
     save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
@@ -387,7 +442,6 @@ public:
     saveParams << "temperature" << "\t" << dpm_->getTemperature() << endl;
     saveParams.close();
     // save vectors
-    save1DFile(dirName + "boxSize.dat", dpm_->getBoxSize());
     save1DIndexFile(dirName + "numVertexInParticleList.dat", dpm_->getNumVertexInParticleList());
     save1DFile(dirName + "radii.dat", dpm_->getVertexRadii());
     save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
