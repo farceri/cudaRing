@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
   long nDim = 2, numVertexPerParticle = 32, numVertices;
   long step, iteration = 0, maxIterations = 5e06, maxSearchStep = 1500, searchStep = 0, updateCount;
   long printFreq = int(maxStep / 10), saveFreq = int(printFreq / 10), minStep = 20, numStep = 0;
-  double sigma, polydispersity = 0.1, previousPhi, currentPhi = 0.1, deltaPhi = 2e-03, phiTh = 0.9, boxRadius = 0;
+  double sigma, polydispersity = 0.1, previousPhi, currentPhi = 0.1, deltaPhi = 2e-03, phiTh = 0.96, boxRadius = 0;
   double cutDistance, cutoff = 0.5, LJcut = 1.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
   double maxDelta, scaleFactor, size;
   double ea = 1e05, el = 20, eb = 10, ec = 1, ew = 10, thetaA = 1, thetaK = 0;
@@ -55,13 +55,6 @@ int main(int argc, char **argv) {
     dpm.setGeometryType(simControlStruct::geometryEnum::normal);
   }
   ioDPMFile ioDPM(&dpm);
-  if(boxType == "circle") {
-    outDir = outDir + "circle/" + argv[6] + "-A" + argv[5] + "/";
-  } else {
-    outDir = outDir + argv[6] + "-box" + argv[8] + argv[9] + "-A" + argv[5] + "/";
-  }
-  cout << outDir << endl;
-  std::experimental::filesystem::create_directory(outDir);
 
   // initialization
   if (inDir != "0") {
@@ -71,7 +64,19 @@ int main(int argc, char **argv) {
     inDir = outDir + inDir + "/";
     ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
     ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
-  } else { // initialize polydisperse packing and minimize soft particle packing with harmonic potential
+  } else { 
+    if(boxType == "circle") {
+      outDir = outDir + "circle/";
+      if (std::experimental::filesystem::exists(outDir) == false) {
+        std::experimental::filesystem::create_directory(outDir);
+        cout << "Created output directory: " << outDir << endl;
+      }
+      outDir = outDir + argv[6] + "-A" + argv[5] + "/";
+    } else {
+      outDir = outDir + argv[6] + "-box" + argv[8] + argv[9] + "-A" + argv[5] + "/";
+    }
+    cout << "Created output directory: " << outDir << endl;
+    // initialize polydisperse packing and minimize soft particle packing with harmonic potential
     dpm.setPotentialType(simControlStruct::potentialEnum::harmonic);
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexVertex);
     dpm.setPolySizeDistribution(shape0, polydispersity);
@@ -107,6 +112,9 @@ int main(int argc, char **argv) {
     // put vertices on particle perimeters
     dpm.initVerticesOnParticles();
     dpm.scalePacking(dpm.getMeanParticleSize());
+    currentDir = outDir + "initial/";
+    std::experimental::filesystem::create_directory(currentDir);
+    ioDPM.savePacking(currentDir);
   }
 
   // simulation settings
@@ -148,9 +156,6 @@ int main(int argc, char **argv) {
   } else {
     dpm.initNVE(Tinject, readState);
   }
-  currentDir = outDir + "initial/";
-  std::experimental::filesystem::create_directory(currentDir);
-  ioDPM.savePacking(currentDir);
   while (searchStep < maxSearchStep) {
     currentDir = outDir + std::to_string(round(dpm.getPhi() * 1000) / 1000).substr(0,5) + "/";
     std::experimental::filesystem::create_directory(currentDir);

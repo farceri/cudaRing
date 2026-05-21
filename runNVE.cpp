@@ -23,17 +23,36 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool readAndMakeNewDir = false, readAndSaveSameDir = true, runDynamics = true;
+  bool readAndMakeNewDir = false, readAndSaveSameDir = false, runDynamics = false;
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = true, logSave = true, linSave = false, saveFinal = true;
-  long numParticles = atof(argv[6]), nDim = 2, numVertexPerParticle = 32, numVertices;
-  long step = 0, maxStep = atof(argv[4]), initialStep = atof(argv[5]), multiple = 1, saveFreq = 1, updateCount = 0;
+  bool readState = true, logSave = false, linSave = true, saveFinal = true;
+  // input variables
+  std::string inDir = argv[1], potType = argv[7], intType = argv[8], mode = argv[10];
+  double timeStep = atof(argv[2]), Tinject = atof(argv[3]);
+  long maxStep = atof(argv[4]), initialStep = atof(argv[5]), numParticles = atol(argv[6]);
+  // other variables
+  long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10); 
-  double cutDistance, cutoff = 0.5, timeStep = atof(argv[2]), timeUnit = 0, sigma, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, Tinject = atof(argv[3]), size;
-  std::string outDir, energyFile, currentDir, potType = argv[7], inDir = argv[1], dirSample, whichDynamics;
+  double cutDistance, cutoff = 0.5, timeUnit = 0, sigma, size, waveQ;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5;
+  std::string outDir, energyFile, currentDir, dirSample, whichDynamics;
+  // set simulation mode
+  if(mode == "change") {
+    readAndMakeNewDir = true;
+    cout << "Change mode: make new directory and run dynamics with different parameters" << endl;
+  } else if(mode == "over") {
+    readAndSaveSameDir = true;
+    cout << "Over mode: run dynamics with same parameters and save in same directory" << endl;
+  } else if(mode == "run") {
+    readAndSaveSameDir = true;
+    runDynamics = true;
+    cout << "Run mode: make DYNAMICS directory and run dynamics with same parameters" << endl;
+  } else {
+    cout << "Default mode: make new directory path and run initial dynamics" << endl;
+    return 1;
+  }
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
   if(potType == "lj") {
@@ -47,10 +66,14 @@ int main(int argc, char **argv) {
     cout << "Setting default harmonic potential" << endl;
     whichDynamics = "nve/";
   }
-  dirSample = whichDynamics + "T" + argv[3] + "/";
-  dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
-  ioDPMFile ioDPM(&dpm);
+  if(intType == "smooth") {
+    dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
+    dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
+  }
+
   // set input and output
+  dirSample = whichDynamics + "T" + argv[3] + "/";
+  ioDPMFile ioDPM(&dpm);
   if (readAndSaveSameDir == true) {//keep running the same dynamics
     readState = true;
     inDir = inDir + dirSample;
@@ -76,6 +99,7 @@ int main(int argc, char **argv) {
     }
     std::experimental::filesystem::create_directory(outDir);
   }
+  cout << "inDir: " << inDir << endl << "outDir: " << outDir << endl;
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   dpm.setEnergyCosts(ea, el, eb, ec);
   if(readState == true) {
@@ -84,12 +108,13 @@ int main(int argc, char **argv) {
   // output file
   energyFile = outDir + "energy.dat";
   ioDPM.openEnergyFile(energyFile);
+
+  // initialize simulation
   sigma = dpm.getMeanParticleSize();
   timeUnit = sigma / sqrt(ec);//epsilon and mass are 1 sqrt(m sigma^2 / epsilon)
   timeStep = dpm.setTimeStep(timeStep * timeUnit);
   cout << "Time step: " << timeStep << " sigma: " << sigma << " Tinject: " << Tinject << endl;
   numVertices = dpm.getNumVertices();
-  // initialize simulation
   dpm.initNVE(Tinject, readState);
   if(readAndMakeNewDir == true) {
     dpm.adjustTemperature(Tinject);
@@ -99,6 +124,7 @@ int main(int argc, char **argv) {
   dpm.calcNeighbors(cutDistance);
   dpm.calcForceEnergy();
   dpm.resetUpdateCount();
+  dpm.setParticleInitialPositions();
   waveQ = dpm.getDeformableWaveNumber();
   // record simulation time
   float elapsed_time_ms = 0;
@@ -108,7 +134,7 @@ int main(int argc, char **argv) {
   cudaEventRecord(start, 0);
   // run NVE integrator
   ioDPM.savePacking(outDir);
-  ioDPM.saveNeighbors(outDir);
+  //ioDPM.saveNeighbors(outDir);
   while(step != maxStep) {
     dpm.NVELoop();
     if(step % saveEnergyFreq == 0) {
@@ -128,7 +154,7 @@ int main(int argc, char **argv) {
         dpm.resetUpdateCount();
         if(saveFinal == true) {
       	  ioDPM.savePacking(outDir);
-          ioDPM.saveNeighbors(outDir);
+          //ioDPM.saveNeighbors(outDir);
         }
       }
       if(readAndMakeNewDir == true) {
@@ -147,15 +173,15 @@ int main(int argc, char **argv) {
         currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
         ioDPM.saveState(currentDir);
-        ioDPM.saveNeighbors(currentDir);
+        //ioDPM.saveNeighbors(currentDir);
       }
     }
     if(linSave == true) {
       if((step % linFreq) == 0) {
-        currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
+        currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";  
         std::experimental::filesystem::create_directory(currentDir);
         ioDPM.saveState(currentDir);
-        ioDPM.saveNeighbors(currentDir);
+        //ioDPM.saveNeighbors(currentDir);
       }
     }
     step += 1;
@@ -168,7 +194,7 @@ int main(int argc, char **argv) {
   // save final configuration
   if(saveFinal == true) {
     ioDPM.savePacking(outDir);
-    ioDPM.saveNeighbors(outDir);
+    //ioDPM.saveNeighbors(outDir);
   }
   ioDPM.closeEnergyFile();
 

@@ -26,22 +26,53 @@ int main(int argc, char **argv) {
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = true, logSave, linSave = false, saveFinal = true;
-  long numParticles = atof(argv[7]), nDim = 2, numVertexPerParticle = 32, numVertices;
-  long maxStep = atof(argv[4]), checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10);
-  long step = 0, initialStep = 0, multiple = 1, saveFreq = 1, firstDecade = 0, updateCount = 0;
-  double cutDistance = 1, waveQ, sigma, damping, inertiaOverDamping = atof(argv[6]);
-  double timeUnit, timeStep = atof(argv[2]), Tinject = atof(argv[3]);
-  double ea = 1e05, el = 1, eb = 1, ec = 1, cutoff, maxDelta;
-  std::string outDir, energyFile, currentDir, inDir = argv[1], dirSample, whichDynamics = "langevin/";
-  dirSample = whichDynamics + "T" + argv[3] + "/";
+  bool readState = true, logSave = false, linSave = true, saveFinal = true;
+  // input variables
+  std::string inDir = argv[1], potType = argv[8], intType = argv[9], mode = argv[10];
+  double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]);
+  long maxStep = atof(argv[5]), initialStep = atof(argv[6]), numParticles = atol(argv[7]);
+  // other variables
+  long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
+  long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
+  double cutDistance, cutoff = 0.5, timeUnit = 0, sigma, size, waveQ;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5;
+  std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "langevin/";
+  // set simulation mode
+  if(mode == "change") {
+    readAndMakeNewDir = true;
+    cout << "Change mode: make new directory and run dynamics with different parameters" << endl;
+  } else if(mode == "over") {
+    readAndSaveSameDir = true;
+    cout << "Over mode: run dynamics with same parameters and save in same directory" << endl;
+  } else if(mode == "run") {
+    readAndSaveSameDir = true;
+    runDynamics = true;
+    cout << "Run mode: make DYNAMICS directory and run dynamics with same parameters" << endl;
+  } else {
+    cout << "Default mode: make new directory path and run initial dynamics" << endl;
+    return 1;
+  }
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
-  dpm.setPotentialType(simControlStruct::potentialEnum::wca);
-  dpm.setInteractionType(simControlStruct::interactionEnum::smooth);
-  dpm.setConcavityType(simControlStruct::concavityEnum::off);
-  ioDPMFile ioDPM(&dpm);
+  if(potType == "lj") {
+    dpm.setPotentialType(simControlStruct::potentialEnum::lennardJones);
+    whichDynamics = "nvt-lj/";
+    dpm.setLJcutoff(LJcut);
+  } else if(potType == "wca") {
+    dpm.setPotentialType(simControlStruct::potentialEnum::wca);
+    whichDynamics = "nvt-wca/";
+  } else {
+    cout << "Setting default harmonic potential" << endl;
+    whichDynamics = "nvt/";
+  }
+  if(intType == "smooth") {
+    dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
+    dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
+  }
+  
   // set input and output
+  dirSample = whichDynamics + "T" + argv[3] + "-damping" + argv[4] + "/";
+  ioDPMFile ioDPM(&dpm);
   if (readAndSaveSameDir == true) {//keep running the same dynamics
     readState = true;
     inDir = inDir + dirSample;
@@ -59,8 +90,7 @@ int main(int argc, char **argv) {
   } else {//start a new dyanmics
     if(readAndMakeNewDir == true) {
       readState = true;
-      outDir = inDir + "../../" + dirSample;
-      //outDir = inDir + "../../../" + dirSample;
+      outDir = inDir + "../" + dirSample;
     } else {
       if(std::experimental::filesystem::exists(inDir + whichDynamics) == false) {
         std::experimental::filesystem::create_directory(inDir + whichDynamics);
@@ -69,6 +99,7 @@ int main(int argc, char **argv) {
     }
     std::experimental::filesystem::create_directory(outDir);
   }
+  cout << "inDir: " << inDir << endl << "outDir: " << outDir << endl;
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   dpm.setEnergyCosts(ea, el, eb, ec);
   if(readState == true) {
@@ -78,32 +109,37 @@ int main(int argc, char **argv) {
   // output file
   energyFile = outDir + "energy.dat";
   ioDPM.openEnergyFile(energyFile);
-  // initialization
+
+  // initialize simulation
   sigma = dpm.getMeanParticleSize();
-  damping = sqrt(inertiaOverDamping) / sigma;
   timeUnit = sigma / sqrt(ec);
   timeStep = dpm.setTimeStep(timeStep * timeUnit);
-  cout << "Energy scales: area " << ea << " segment " << el << " bending " << eb << " interaction " << ec << endl;
   cout << "Units - time: " << timeUnit << " space: " << sigma << " time step: " << timeStep << endl;
   cout << "Thermostat - damping: " << damping << " Tinject: " << Tinject << endl;
-  cout << "Current phi: " << dpm.getPhi() << endl;
-  // initialize simulation
-  dpm.calcNeighborList(cutDistance);
-  dpm.calcForceEnergy();
-  dpm.initLangevin2(Tinject, damping, readState);
-  cutoff = (1 + cutDistance) * 2*dpm.getMeanVertexRadius();
-  dpm.setDisplacementCutoff(cutoff, cutDistance);
+  damping /= timeUnit;
+  dpm.initLangevin(Tinject, damping, readState);
+  size = 2 * dpm.getMeanVertexRadius();
+  cutDistance = dpm.setDisplacementCutoff(cutoff, size);
+  dpm.calcNeighbors(cutDistance);
+  dpm.calcForceEnergy();;
   dpm.resetUpdateCount();
   dpm.setParticleInitialPositions();
   waveQ = dpm.getDeformableWaveNumber();
-  // run integrator
+  // record simulation time
+  float elapsed_time_ms = 0;
+  cudaEvent_t start, stop;
+  cudaEventCreate(&start);
+  cudaEventCreate(&stop);
+  cudaEventRecord(start, 0);
+  // run NVT integrator
+  ioDPM.savePacking(outDir);
   while(step != maxStep) {
-    dpm.langevin2Loop();
-    if(step % linFreq == 0) {
+    dpm.langevinLoop();
+    if(step % saveEnergyFreq == 0) {
       ioDPM.saveDeformableEnergy(step, timeStep, numVertices);
       if(step % checkPointFreq == 0) {
         cout << "Langevin: current step: " << step;
-        cout << " E/N: " << (dpm.getPotentialEnergy() + dpm.getKineticEnergy()) / numParticles;
+        cout << " E/N: " << dpm.getEnergy() / numVertices;
         cout << " T: " << dpm.getTemperature();
         cout << " ISF: " << dpm.getParticleISF(waveQ);
         cout << " phi: " << dpm.getPhi();
@@ -142,6 +178,11 @@ int main(int argc, char **argv) {
     }
     step += 1;
   }
+  // instrument code to measure end time
+  cudaEventRecord(stop, 0);
+  cudaEventSynchronize(stop);
+  cudaEventElapsedTime(&elapsed_time_ms, start, stop);
+  printf("Elapsed time: %f ms, %f s.\n", elapsed_time_ms, elapsed_time_ms / 1000); // exec. time
   // save final configuration
   if(saveFinal == true) {
     ioDPM.savePacking(outDir);

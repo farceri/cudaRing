@@ -1224,6 +1224,34 @@ double DPM2D::getMaxDisplacement() {
   return thrust::reduce(d_disp.begin(), d_disp.end(), double(-1), thrust::maximum<double>());
 }
 
+void DPM2D::removeCOMDrift() {
+  getMaxDisplacement();
+  // compute drift on x
+  thrust::device_vector<double> disp_x(numVertices);
+  thrust::device_vector<long> idx(numVertices);
+  thrust::sequence(idx.begin(), idx.end(), 0, 2);
+  thrust::gather(idx.begin(), idx.end(), d_disp.begin(), disp_x.begin());
+  double drift_x = thrust::reduce(disp_x.begin(), disp_x.end(), double(0), thrust::plus<double>()) / numVertices;
+  // compute drift on y
+  thrust::device_vector<double> disp_y(numVertices);
+  thrust::device_vector<long> idy(numVertices);
+  thrust::sequence(idy.begin(), idy.end(), 1, 2);
+  thrust::gather(idy.begin(), idy.end(), d_disp.begin(), disp_y.begin());
+  double drift_y = thrust::reduce(disp_y.begin(), disp_y.end(), double(0), thrust::plus<double>()) / numVertices;
+
+  // subtract drift from current positions
+  long s_nDim(nDim);
+  auto r = thrust::counting_iterator<long>(0);
+	double* pos = thrust::raw_pointer_cast(&d_pos[0]);
+	double* boxSize = thrust::raw_pointer_cast(&d_boxSize[0]);
+
+  auto removeDrift = [=] __device__ (long vId) {
+		pos[vId * s_nDim] -= drift_x;
+    pos[vId * s_nDim + 1] -= drift_y;
+  };
+  thrust::for_each(r, r + numVertices, removeDrift);
+}
+
 void DPM2D::checkMaxDisplacement() {
   double maxDelta;
   maxDelta = getMaxDisplacement();
@@ -1256,34 +1284,6 @@ void DPM2D::checkDisplacement() {
   }
 }
 
-void DPM2D::removeCOMDrift() {
-  getMaxDisplacement();
-  // compute drift on x
-  thrust::device_vector<double> disp_x(numVertices);
-  thrust::device_vector<long> idx(numVertices);
-  thrust::sequence(idx.begin(), idx.end(), 0, 2);
-  thrust::gather(idx.begin(), idx.end(), d_disp.begin(), disp_x.begin());
-  double drift_x = thrust::reduce(disp_x.begin(), disp_x.end(), double(0), thrust::plus<double>()) / numVertices;
-  // compute drift on y
-  thrust::device_vector<double> disp_y(numVertices);
-  thrust::device_vector<long> idy(numVertices);
-  thrust::sequence(idy.begin(), idy.end(), 1, 2);
-  thrust::gather(idy.begin(), idy.end(), d_disp.begin(), disp_y.begin());
-  double drift_y = thrust::reduce(disp_y.begin(), disp_y.end(), double(0), thrust::plus<double>()) / numVertices;
-
-  // subtract drift from current positions
-  long s_nDim(nDim);
-  auto r = thrust::counting_iterator<long>(0);
-	double* pos = thrust::raw_pointer_cast(&d_pos[0]);
-	double* boxSize = thrust::raw_pointer_cast(&d_boxSize[0]);
-
-  auto removeDrift = [=] __device__ (long vId) {
-		pos[vId * s_nDim] -= drift_x;
-    pos[vId * s_nDim + 1] -= drift_y;
-  };
-  thrust::for_each(r, r + numVertices, removeDrift);
-}
-
 void DPM2D::checkNeighbors() {
   switch (simControl.neighborType) {
     case simControlStruct::neighborEnum::neighbor:
@@ -1301,15 +1301,6 @@ void DPM2D::checkNeighbors() {
   //}
 }
 
-
-double DPM2D::getParticleMaxDisplacement() {
-  const double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
-  const double *pLastPos = thrust::raw_pointer_cast(&d_particleLastPos[0]);
-  double *pDisp = thrust::raw_pointer_cast(&d_particleDisp[0]);
-  kernelCalcParticleDisplacement<<<partDimGrid,dimBlock>>>(pPos, pLastPos, pDisp);
-  return thrust::reduce(d_particleDisp.begin(), d_particleDisp.end(), double(-1), thrust::maximum<double>());
-}
-
 void DPM2D::checkParticleMaxDisplacement() {
   double maxDelta;
   maxDelta = getParticleMaxDisplacement();
@@ -1318,6 +1309,14 @@ void DPM2D::checkParticleMaxDisplacement() {
     resetLastPositions();
     //cout << "DPM2D::checParticleMaxDisplacement - updated neighbors, maxDelta: " << maxDelta << " cutoff: " << cutoff << endl;
   }
+}
+
+double DPM2D::getParticleMaxDisplacement() {
+  const double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
+  const double *pLastPos = thrust::raw_pointer_cast(&d_particleLastPos[0]);
+  double *pDisp = thrust::raw_pointer_cast(&d_particleDisp[0]);
+  kernelCalcParticleDisplacement<<<partDimGrid,dimBlock>>>(pPos, pLastPos, pDisp);
+  return thrust::reduce(d_particleDisp.begin(), d_particleDisp.end(), double(-1), thrust::maximum<double>());
 }
 
 void DPM2D::checkParticleNeighbors() {
