@@ -55,13 +55,16 @@ __constant__ double d_extSq;
 __constant__ long* d_neighborListPtr;
 __constant__ long* d_maxNeighborListPtr;
 __constant__ long d_neighborListSize;
-__constant__ long d_maxNeighbors;
 
 // particle neighborList
 __constant__ long* d_partNeighborListPtr;
 __constant__ long* d_partMaxNeighborListPtr;
 __constant__ long d_partNeighborListSize;
-__constant__ long d_partMaxNeighbors;
+
+// particle contactList
+__constant__ long* d_contactListPtr;
+__constant__ long* d_maxContactListPtr;
+__constant__ long d_contactListSize;
 
 
 inline __device__ double pbcDistance(const double x1, const double x2, const long dim) {
@@ -301,7 +304,7 @@ inline __device__ bool extractOtherParticlePos(const long particleId, const long
 }
 
 inline __device__ bool extractNeighbor(const long vertexId, const long nListId, const double* pos, const double* rad, double* otherPos, double& otherRad) {
-	auto otherId = d_neighborListPtr[vertexId*d_neighborListSize + nListId];
+	auto otherId = d_neighborListPtr[vertexId * d_neighborListSize + nListId];
   	if ((vertexId != otherId) && (otherId != -1)) {
 		#pragma unroll (MAXDIM)
     	for (long dim = 0; dim < d_nDim; dim++) {
@@ -314,7 +317,7 @@ inline __device__ bool extractNeighbor(const long vertexId, const long nListId, 
 }
 
 inline __device__ bool extractNeighborPos(const long vertexId, const long nListId, const double* pos, double* otherPos) {
-	auto otherId = d_neighborListPtr[vertexId*d_neighborListSize + nListId];
+	auto otherId = d_neighborListPtr[vertexId * d_neighborListSize + nListId];
   	if ((vertexId != otherId) && (otherId != -1)) {
 		#pragma unroll (MAXDIM)
     	for (long dim = 0; dim < d_nDim; dim++) {
@@ -325,8 +328,16 @@ inline __device__ bool extractNeighborPos(const long vertexId, const long nListI
   return false;
 }
 
+inline __device__ bool checkNeighbor(const long vertexId, const long nListId) {
+	auto otherId = d_neighborListPtr[vertexId * d_neighborListSize + nListId];
+  	if ((vertexId != otherId) && (otherId != -1)) {
+    	return true;
+  	}
+  return false;
+}
+
 inline __device__ bool extractParticleNeighbor(const long particleId, const long nListId, const double* pPos, const double* pRad, double* otherPos, double& otherRad) {
-	auto otherId = d_partNeighborListPtr[particleId*d_partNeighborListSize + nListId];
+	auto otherId = d_partNeighborListPtr[particleId * d_partNeighborListSize + nListId];
   	if ((particleId != otherId) && (otherId != -1)) {
 		#pragma unroll (MAXDIM)
     	for (long dim = 0; dim < d_nDim; dim++) {
@@ -338,8 +349,8 @@ inline __device__ bool extractParticleNeighbor(const long particleId, const long
   return false;
 }
 
-inline __device__ bool extractParticleNeighborPos(const long particleId, const long nListId, const double* pPos, double* otherPos) {
-	auto otherId = d_partNeighborListPtr[particleId*d_partNeighborListSize + nListId];
+inline __device__ bool extractContact(const long particleId, const long nListId, const double* pPos, double* otherPos) {
+	auto otherId = d_contactListPtr[particleId * d_contactListSize + nListId];
   	if ((particleId != otherId) && (otherId != -1)) {
 		#pragma unroll (MAXDIM)
     	for (long dim = 0; dim < d_nDim; dim++) {
@@ -1601,6 +1612,27 @@ __global__ void kernelCalcParticlePositions(const double* pos, double* particleP
 	}
 }
 
+inline __device__ void calcParticleVel(const long particleId, const double* vel, double* partVel) {
+  	double velSum[MAXDIM];
+	auto firstId = d_firstVertexInParticleIdPtr[particleId];
+  	for (long currentId = firstId; currentId < firstId + d_numVertexInParticleListPtr[particleId]-1; currentId++) {
+		velSum[0] += vel[currentId * d_nDim];
+		velSum[1] += vel[currentId * d_nDim + 1];
+	}
+	#pragma unroll (MAXDIM)
+	for (long dim = 0; dim < d_nDim; dim++) {
+	  velSum[dim] /= d_numVertexInParticleListPtr[particleId];
+	  partVel[dim] = velSum[dim];
+	}
+}
+
+__global__ void kernelCalcParticleVelocities(const double* vel, double* particleVel) {
+	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
+	if (particleId < d_numParticles) {
+		calcParticleVel(particleId, vel, &particleVel[particleId*d_nDim]);
+	}
+}
+
 __global__ void kernelCalcVertexArea(const double* rad, double* vertexArea) {
 	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
 	if (particleId < d_numParticles) {
@@ -1703,8 +1735,8 @@ __global__ void kernelTranslateAndRotateVertices(const double* pPos, const doubl
 __global__ void kernelCalcNeighborList(const double* pos, const double* rad, const double cutDistance) {
   	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
 	if (vertexId < d_numVertices) {
-		auto otherParticleId = -1;
 		auto addedNeighbor = 0;
+		auto otherParticleId = -1;
 		double otherRad, radSum;
 		double thisPos[MAXDIM], otherPos[MAXDIM];
 		getVertexPos(vertexId, pos, thisPos);
@@ -1717,8 +1749,8 @@ __global__ void kernelCalcNeighborList(const double* pos, const double* rad, con
 				if(extractOtherVertex(vertexId, otherId, pos, rad, otherPos, otherRad)) {
 					bool isNeighbor = false;
 					radSum = thisRad + otherRad;
-					isNeighbor = (-calcOverlap(thisPos, otherPos, radSum) < cutDistance);
-					//isNeighbor = (calcDistance(thisPos, otherPos) < (cutDistance * radSum));
+					//isNeighbor = (-calcOverlap(thisPos, otherPos, radSum) < cutDistance);
+					isNeighbor = (calcDistance(thisPos, otherPos) < (cutDistance * radSum));
 					if (addedNeighbor < d_neighborListSize) {
 						d_neighborListPtr[vertexId * d_neighborListSize + addedNeighbor] = otherId*isNeighbor -1*(!isNeighbor);
 					}
@@ -1727,38 +1759,6 @@ __global__ void kernelCalcNeighborList(const double* pos, const double* rad, con
 			}
 		}
 		d_maxNeighborListPtr[vertexId] = addedNeighbor;
-	}
-}
-
-__global__ void kernelCalcParticleNeighbors(const double* pos, const double* rad, const long neighborLimit, long* neighborList, long* numNeighbors) {
-	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
-	if (particleId < d_numParticles) {
-		auto addedNeighbor = 0;
-		auto newNeighborId = -1;
-		double thisRad, otherRad;
-		double thisPos[MAXDIM], otherPos[MAXDIM];
-		auto firstVertex = d_firstVertexInParticleIdPtr[particleId];
-		auto lastVertex = firstVertex + d_numVertexInParticleListPtr[particleId];
-		for(long vertexId = firstVertex; vertexId < lastVertex; vertexId++) {
-			getVertex(vertexId, pos, rad, thisPos, thisRad);
-			// compute vertex contacts and fill out particle contact list
-			for (long nListId = 0; nListId < d_partMaxNeighborListPtr[particleId]; nListId++) {
-				if (extractNeighbor(vertexId, nListId, pos, rad, otherPos, otherRad)) {
-					newNeighborId = d_particleIdListPtr[d_neighborListPtr[vertexId * d_neighborListSize + nListId]];
-					bool isNewNeighbor = true;
-					for (long neighId = 0; neighId < neighborLimit; neighId++) {
-						if(newNeighborId == neighborList[particleId * neighborLimit + neighId]) {
-							isNewNeighbor = false;
-						}
-					}
-					if(isNewNeighbor) {
-						neighborList[particleId * neighborLimit + addedNeighbor] = newNeighborId;
-						addedNeighbor++;
-					}
-				}
-			}
-		}
-		numNeighbors[particleId] = addedNeighbor;
 	}
 }
 
@@ -1788,30 +1788,67 @@ __global__ void kernelCalcParticleNeighborList(const double* pPos, const double*
   	}
 }
 
-__global__ void kernelCalcContacts(const double* pos, const double* rad, const double gapSize, const long contactLimit, long* contactList, long* numContacts) {
+__global__ void kernelCalcContacts() {
+	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
+	if (particleId < d_numParticles) {
+		auto addedContact = 0;
+		auto newContactId = -1;
+		//long vertexNeighborId = -1;
+		auto firstVertex = d_firstVertexInParticleIdPtr[particleId];
+		auto lastVertex = firstVertex + d_numVertexInParticleListPtr[particleId];
+		for(long vertexId = firstVertex; vertexId < lastVertex; vertexId++) {
+			// compute vertex contacts and fill out particle contact list
+			for (long nListId = 0; nListId < d_maxNeighborListPtr[vertexId]; nListId++) {
+				if (checkNeighbor(vertexId, nListId)) {
+					newContactId = d_particleIdListPtr[d_neighborListPtr[vertexId * d_neighborListSize + nListId]];
+					//vertexNeighborId = d_neighborListPtr[vertexId * d_neighborListSize + nListId];
+					//if (particleId == 0) printf("particleId %ld \t vertexId: %ld \t neighborId: %ld contactId: %ld\n", particleId, vertexId, vertexNeighborId, newContactId);
+					bool isNewContact = true;
+					for (long neighId = 0; neighId < d_contactListSize; neighId++) {
+						if(newContactId == d_contactListPtr[particleId * d_contactListSize + neighId]) {
+							isNewContact = false;
+						}
+					}
+					if(isNewContact) {
+						d_contactListPtr[particleId * d_contactListSize + addedContact] = newContactId;
+						addedContact++;
+					}
+				}
+			}
+		}
+		d_maxContactListPtr[particleId] = addedContact;
+	}
+}
+
+// gapSize is set to 1 for computing geometrical contacts, not necessarily equal to interaction contacts
+__global__ void kernelCalcGeometricContacts(const double* pos, const double* rad, const double gapSize) {
 	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
 	if (particleId < d_numParticles) {
 		auto addedContact = 0;
 		auto newContactId = -1;
 		double thisRad, otherRad, radSum;
 		double thisPos[MAXDIM], otherPos[MAXDIM];
-		for(long vertexId = d_firstVertexInParticleIdPtr[particleId]; vertexId < d_firstVertexInParticleIdPtr[particleId] + d_numVertexInParticleListPtr[particleId]; vertexId++) {
+		auto firstVertex = d_firstVertexInParticleIdPtr[particleId];
+		auto lastVertex = firstVertex + d_numVertexInParticleListPtr[particleId];
+		for(long vertexId = firstVertex; vertexId < lastVertex; vertexId++) {
 			getVertex(vertexId, pos, rad, thisPos, thisRad);
 			// compute vertex contacts and fill out particle contact list
-			for (long nListId = 0; nListId < d_partMaxNeighborListPtr[particleId]; nListId++) {
+			for (long nListId = 0; nListId < d_maxNeighborListPtr[particleId]; nListId++) {
 				if (extractNeighbor(vertexId, nListId, pos, rad, otherPos, otherRad)) {
+					bool isContact = false;
 					radSum = thisRad + otherRad;
-					if (calcOverlap(thisPos, otherPos, radSum) > (-gapSize)) {
-						if (addedContact < contactLimit) {
+					isContact = calcDistance(thisPos, otherPos) < (gapSize * radSum);
+					if (isContact) {
+						if (addedContact < d_contactListSize) {
 							newContactId = d_particleIdListPtr[d_neighborListPtr[vertexId * d_neighborListSize + nListId]];
 							bool isNewContact = true;
-							for (long contactId = 0; contactId < contactLimit; contactId++) {
-								if(newContactId == contactList[particleId * contactLimit + contactId]) {
+							for (long contactId = 0; contactId < d_contactListSize; contactId++) {
+								if(newContactId == d_contactListPtr[particleId * d_contactListSize + contactId]) {
 									isNewContact = false;
 								}
 							}
 							if(isNewContact) {
-								contactList[particleId * contactLimit + addedContact] = newContactId;
+								d_contactListPtr[particleId * d_contactListSize + addedContact] = newContactId;
 								addedContact++;
 							}
 						}
@@ -1819,23 +1856,7 @@ __global__ void kernelCalcContacts(const double* pos, const double* rad, const d
 				}
 			}
 		}
-		numContacts[particleId] = addedContact;
-	}
-}
-
-__global__ void kernelCalcContactVectorList(const double* pPos, const long* contactList, const long contactListSize, const long maxContacts, double* contactVectorList) {
-	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
-	if (particleId < d_numParticles) {
-		double thisPos[MAXDIM], otherPos[MAXDIM];
-		getParticlePos(particleId, pPos, thisPos);
-		for (long cListId = 0; cListId < maxContacts; cListId++) {
-			long otherId = contactList[particleId * contactListSize + cListId];
-			if ((particleId != otherId) && (otherId != -1)) {
-				extractOtherParticlePos(particleId, otherId, pPos, otherPos);
-				//Calculate the contactVector and put it into contactVectorList, which is a maxContacts*nDim by numParticle array
-				getDelta(thisPos, otherPos, &contactVectorList[particleId*(maxContacts*d_nDim) + cListId*d_nDim]);
-			}
-		}
+		d_maxContactListPtr[particleId] = addedContact;
 	}
 }
 
@@ -1936,43 +1957,26 @@ __global__ void kernelCalcHexaticOrderParameter(const double* pPos, double* psi6
 		for (long dim = 0; dim < d_nDim; dim++) {
 			thisPos[dim] = pPos[particleId * d_nDim + dim];
 		}
-    	// extract neighbor particles
-    	for (long nListId = 0; nListId < d_partMaxNeighborListPtr[particleId]; nListId++) {
-      		if (extractParticleNeighborPos(particleId, nListId, pPos, otherPos)) {
-				getDelta(thisPos, otherPos, delta);
-				angle = atan2(delta[1], delta[0]);
-				psi6[particleId] += sin(6 * angle) / (6 * angle);
+		auto psi6Re = 0.0;
+		auto psi6Im = 0.0;
+		if (d_maxContactListPtr[particleId] > 0) {
+			// extract neighbor particles
+			for (long nListId = 0; nListId < d_maxContactListPtr[particleId]; nListId++) {
+				if (extractContact(particleId, nListId, pPos, otherPos)) {
+					getDelta(thisPos, otherPos, delta);
+					angle = atan2(delta[1], delta[0]);
+					psi6Re += cos(6.0 * angle);
+					psi6Im += sin(6.0 * angle);
+				}
 			}
+			psi6Re /= d_maxContactListPtr[particleId];
+			psi6Im /= d_maxContactListPtr[particleId];
 		}
-		psi6[particleId] /= d_partMaxNeighborListPtr[particleId];
+		psi6[particleId] = hypot(psi6Re, psi6Im);
 	}
 }
 
 //******************************** integrators *******************************//
-__global__ void kernelExtractThermalVertexVel(double* vel, const double* r1, const double* r2, const double amplitude) {
-	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (vertexId < d_numVertices) {
-		double rNum[MAXDIM];
-		rNum[0] = sqrt(-2.0 * log(r1[vertexId])) * cos(2.0 * PI * r2[vertexId]);
-		rNum[1] = sqrt(-2.0 * log(r1[vertexId])) * sin(2.0 * PI * r2[vertexId]);
-		for (long dim = 0; dim < d_nDim; dim++) {
-			vel[vertexId * d_nDim + dim] = amplitude * rNum[dim];
-		}
-  	}
-}
-
-__global__ void kernelExtractThermalParticleVel(double* pVel, const double* r1, const double* r2, const double amplitude) {
-	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (particleId < d_numParticles) {
-		double rNum[MAXDIM];
-		rNum[0] = sqrt(-2.0 * log(r1[particleId])) * cos(2.0 * PI * r2[particleId]);
-		rNum[1] = sqrt(-2.0 * log(r1[particleId])) * sin(2.0 * PI * r2[particleId]);
-		for (long dim = 0; dim < d_nDim; dim++) {
-			pVel[particleId * d_nDim + dim] = amplitude * rNum[dim];
-		}
-  	}
-}
-
 __global__ void kernelUpdateVertexPos(double* pos, const double* vel, const double timeStep) {
   	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
@@ -1982,113 +1986,11 @@ __global__ void kernelUpdateVertexPos(double* pos, const double* vel, const doub
   	}
 }
 
-__global__ void kernelUpdateParticlePos(double* pPos, const double* pVel, const double timeStep) {
-  	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (particleId < d_numParticles) {
-    	for (long dim = 0; dim < d_nDim; dim++) {
-			pPos[particleId * d_nDim + dim] += timeStep * pVel[particleId * d_nDim + dim];
-		}
-  	}
-}
-
 __global__ void kernelUpdateVertexVel(double* vel, const double* force, const double timeStep) {
   	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
     	for (long dim = 0; dim < d_nDim; dim++) {
 			vel[vertexId * d_nDim + dim] += timeStep * force[vertexId * d_nDim + dim];
-		}
-  	}
-}
-
-__global__ void kernelUpdateRigidPos(double* pPos, const double* pVel, double* pAngle, const double* pAngvel, const double timeStep) {
-  	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (particleId < d_numParticles) {
-    	for (long dim = 0; dim < d_nDim; dim++) {
-			pPos[particleId * d_nDim + dim] += timeStep * pVel[particleId * d_nDim + dim];
-		}
-		pAngle[particleId] += timeStep * pAngvel[particleId];
-  	}
-}
-
-__global__ void kernelUpdateBrownianVertexVel(double* vel, const double* force, double* thermalVel, const double mobility) {
-	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (vertexId < d_numVertices) {
-		auto particleId = d_particleIdListPtr[vertexId];
-		for (long dim = 0; dim < d_nDim; dim++) {
-			vel[vertexId * d_nDim + dim] = mobility * force[vertexId * d_nDim + dim] + thermalVel[particleId * d_nDim + dim];
-		}
-  	}
-}
-
-__global__ void kernelUpdateActiveVertexVel(double* vel, const double* force, double* pAngle, const double driving, const double mobility) {
-	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (vertexId < d_numVertices) {
-		auto particleId = d_particleIdListPtr[vertexId];
-		auto angle = pAngle[particleId];
-		for (long dim = 0; dim < d_nDim; dim++) {
-			vel[vertexId * d_nDim + dim] = mobility * (force[vertexId * d_nDim + dim] + driving * ((1 - dim) * cos(angle) + dim * sin(angle)));
-		}
-  	}
-}
-
-__global__ void kernelUpdateActiveParticleVel(double* pVel, const double* pForce, double* pAngle, const double driving, const double mobility) {
-	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (particleId < d_numParticles) {
-		auto angle = pAngle[particleId];
-		for (long dim = 0; dim < d_nDim; dim++) {
-			pVel[particleId * d_nDim + dim] = mobility * (pForce[particleId * d_nDim + dim] + driving * ((1 - dim) * cos(angle) + dim * sin(angle)));
-		}
-  	}
-}
-
-__global__ void kernelUpdateRigidBrownianVel(double* pVel, const double* pForce, double* pAngvel, const double* pTorque, double* thermalVel, const double mobility) {
-	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (particleId < d_numParticles) {
-		for (long dim = 0; dim < d_nDim; dim++) {
-			pVel[particleId * d_nDim + dim] = mobility * pForce[particleId * d_nDim + dim] + thermalVel[particleId * d_nDim + dim];
-		}
-		pAngvel[particleId] = mobility * pTorque[particleId];
-  	}
-}
-
-__global__ void kernelUpdateRigidActiveVel(double* pVel, const double* pForce, double* pActiveAngle, double* pAngvel, const double* pTorque, const double driving, const double mobility) {
-	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (particleId < d_numParticles) {
-		auto activeAngle = pActiveAngle[particleId];
-		for (long dim = 0; dim < d_nDim; dim++) {
-			pVel[particleId * d_nDim + dim] = mobility * pForce[particleId * d_nDim + dim] + driving * ((1 - dim) * cos(activeAngle) + dim * sin(activeAngle));
-		}
-		pAngvel[particleId] = mobility * pTorque[particleId];
-  	}
-}
-
-__global__ void kernelConserveVertexMomentum(double* vel) {
-  	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
-  	__shared__ double COMP[MAXDIM];
-  	if (threadIdx.x == 0) {
-    	for (long dim = 0; dim < d_nDim; dim++) {
-			COMP[dim] = 0.0;
-		}
-  	}
-  	__syncthreads();
-
-  	if (vertexId < d_numVertices) {
-    	for (long dim = 0; dim < d_nDim; dim++) {
-			atomicAdd(&COMP[dim], vel[vertexId * d_nDim + dim]);
-    	}
-  	}
-  	__syncthreads();
-
-  	if (threadIdx.x == 0) {
-    	for (long dim = 0; dim < d_nDim; dim++) {
-			COMP[dim] /= d_numVertices;
-		}
-  	}
-  	__syncthreads();
-
-  	if (vertexId < d_numVertices) {
-    	for (long dim = 0; dim < d_nDim; dim++) {
-			vel[vertexId * d_nDim + dim] -= COMP[dim];
 		}
   	}
 }

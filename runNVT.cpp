@@ -26,9 +26,9 @@ int main(int argc, char **argv) {
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = true, logSave = false, linSave = true, saveFinal = true;
+  bool readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
   // input variables
-  std::string inDir = argv[1], potType = argv[8], intType = argv[9], mode = argv[10];
+  std::string inDir = argv[1], noiseType = argv[8], potType = argv[9], mode = argv[10];
   double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]);
   long maxStep = atof(argv[5]), initialStep = atof(argv[6]), numParticles = atol(argv[7]);
   // other variables
@@ -36,7 +36,7 @@ int main(int argc, char **argv) {
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double cutDistance, cutoff = 0.5, timeUnit = 0, sigma, size, waveQ;
   double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5;
-  std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "langevin/";
+  std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "langevin";
   // set simulation mode
   if(mode == "change") {
     readAndMakeNewDir = true;
@@ -48,24 +48,38 @@ int main(int argc, char **argv) {
     readAndSaveSameDir = true;
     runDynamics = true;
     cout << "Run mode: make DYNAMICS directory and run dynamics with same parameters" << endl;
+  } else if(mode == "runlog") {
+    readAndSaveSameDir = true;
+    runDynamics = true;
+    logSave = true;
+    linSave = false;
+    cout << "Run Log mode: make DYNAMICS-LOG directory, run dynamics with same parameters and save log-spaced trajectories" << endl;
   } else {
     cout << "Default mode: make new directory path and run initial dynamics" << endl;
-    return 1;
+    readState = false;
   }
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
+  if(noiseType == "brownian") {
+    dpm.setNoiseType(simControlStruct::noiseEnum::brownian);
+    whichDynamics = "brownian";
+  } else if(noiseType == "driven") {
+    dpm.setNoiseType(simControlStruct::noiseEnum::drivenBrownian);
+    whichDynamics = "driven";
+  } else {
+    cout << "Setting default langevin noise" << endl;
+  }
   if(potType == "lj") {
     dpm.setPotentialType(simControlStruct::potentialEnum::lennardJones);
-    whichDynamics = "nvt-lj/";
+    whichDynamics = whichDynamics + "-lj/";
     dpm.setLJcutoff(LJcut);
   } else if(potType == "wca") {
     dpm.setPotentialType(simControlStruct::potentialEnum::wca);
-    whichDynamics = "nvt-wca/";
+    whichDynamics = whichDynamics + "-wca/";
   } else {
     cout << "Setting default harmonic potential" << endl;
-    whichDynamics = "nvt/";
   }
-  if(intType == "smooth") {
+  if(smooth) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
     dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
   }
@@ -78,11 +92,11 @@ int main(int argc, char **argv) {
     inDir = inDir + dirSample;
     outDir = inDir;
     if(runDynamics == true) {
-      logSave = true;
-      outDir = outDir + "dynamics/";
+      outDir = outDir + "dynamics";
+      if(logSave == true) outDir = outDir + "-log/";
+      else outDir = outDir + "/";
       if(std::experimental::filesystem::exists(outDir) == true) {
         inDir = outDir;
-        initialStep = atof(argv[5]);
       } else {
         std::experimental::filesystem::create_directory(outDir);
       }
@@ -117,13 +131,15 @@ int main(int argc, char **argv) {
   cout << "Units - time: " << timeUnit << " space: " << sigma << " time step: " << timeStep << endl;
   cout << "Thermostat - damping: " << damping << " Tinject: " << Tinject << endl;
   damping /= timeUnit;
+  ioDPM.saveDriveParams(outDir, damping);
+
+  // initialize integration scheme
   dpm.initLangevin(Tinject, damping, readState);
   size = 2 * dpm.getMeanVertexRadius();
   cutDistance = dpm.setDisplacementCutoff(cutoff, size);
   dpm.calcNeighbors(cutDistance);
   dpm.calcForceEnergy();;
   dpm.resetUpdateCount();
-  dpm.setParticleInitialPositions();
   waveQ = dpm.getDeformableWaveNumber();
   // record simulation time
   float elapsed_time_ms = 0;
@@ -131,16 +147,19 @@ int main(int argc, char **argv) {
   cudaEventCreate(&start);
   cudaEventCreate(&stop);
   cudaEventRecord(start, 0);
-  // run NVT integrator
+
+  // run integrator
   ioDPM.savePacking(outDir);
+  ioDPM.saveInitialNeighbors(outDir);
   while(step != maxStep) {
     dpm.langevinLoop();
     if(step % saveEnergyFreq == 0) {
       ioDPM.saveDeformableEnergy(step, timeStep, numVertices);
       if(step % checkPointFreq == 0) {
-        cout << "Langevin: current step: " << step;
+        cout << "NVT: current step: " << step;
         cout << " E/N: " << dpm.getEnergy() / numVertices;
         cout << " T: " << dpm.getTemperature();
+        cout << " Ks/Kc: " << dpm.getShapeCOMEnergyRatio();
         cout << " ISF: " << dpm.getParticleISF(waveQ);
         cout << " phi: " << dpm.getPhi();
         updateCount = dpm.getUpdateCount();

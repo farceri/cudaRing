@@ -96,7 +96,7 @@ PYBIND11_MODULE(libPyDPM, m) {
   .def("getPotentialEnergy", &DPM2D::getPotentialEnergy)
   .def("getKineticEnergy", &DPM2D::getKineticEnergy)
   .def("getTemperature", &DPM2D::getTemperature)
-  .def("getTotalEnergy", &DPM2D::getTotalEnergy)
+  .def("getParticleEnergy", &DPM2D::getParticleEnergy)
   .def("getPhi", &DPM2D::getPhi)
   .def("getPreferredPhi", &DPM2D::getPreferredPhi)
   .def("getParticlePhi", &DPM2D::getParticlePhi)

@@ -61,9 +61,9 @@ public:
   }
 
   void saveEnergy(long step, double timeStep, long numParticles, long numVertices) {
-    if(dpm_->simControl.particleType == simControlStruct::particleEnum::deformable) {
+    if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::deformable) {
       saveDeformableEnergy(step, timeStep, numVertices);
-    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::rigid) {
+    } else if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::rigid) {
       saveRigidEnergy(step, timeStep, numParticles);
     }
   }
@@ -76,6 +76,8 @@ public:
     energyFile << setprecision(precision) << epot << "\t";
     energyFile << setprecision(precision) << ekin << "\t";
     energyFile << setprecision(precision) << etot << "\t";
+    energyFile << setprecision(precision) << dpm_->getShapeCOMEnergyRatio() << "\t";
+    energyFile << setprecision(precision) << dpm_->getParticleHexaticOrder() << "\t";
     energyFile << setprecision(precision) << dpm_->getPhi() << endl;
   }
 
@@ -266,9 +268,9 @@ public:
   }
 
   void readPackingFromDirectory(string dirName, long numParticles_, long nDim_) {
-    if(dpm_->simControl.particleType == simControlStruct::particleEnum::deformable) {
+    if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::deformable) {
       readDeformablePackingFromDirectory(dirName, numParticles_, nDim_);
-    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::rigid) {
+    } else if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::rigid) {
       readRigidPackingFromDirectory(dirName, numParticles_, nDim_);
     }
   }
@@ -379,9 +381,9 @@ public:
   }
 
   void savePacking(string dirName) {
-    if(dpm_->simControl.particleType == simControlStruct::particleEnum::deformable) {
+    if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::deformable) {
       saveDeformablePacking(dirName);
-    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::rigid) {
+    } else if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::rigid) {
       saveRigidPacking(dirName);
     }
     // save box
@@ -429,6 +431,7 @@ public:
     //save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
     //save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
     save1DFile(dirName + "particleRad.dat", dpm_->getParticleRadii());
+    save2DFile(dirName + "shapes.dat", dpm_->getParticleShapes(), 3); // 3 is for area, perimeter and shape parameter
   }
 
   void saveRigidPacking(string dirName) {
@@ -455,9 +458,9 @@ public:
   }
 
   void readState(string dirName, long numParticles_, long numVertices_, long nDim_) {
-    if(dpm_->simControl.particleType == simControlStruct::particleEnum::deformable) {
+    if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::deformable) {
       readDeformableState(dirName, numParticles_, numVertices_, nDim_);
-    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::rigid) {
+    } else if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::rigid) {
       readRigidState(dirName, numParticles_, nDim_);
     }
   }
@@ -491,9 +494,9 @@ public:
   }
 
   void saveState(string dirName) {
-    if(dpm_->simControl.particleType == simControlStruct::particleEnum::deformable) {
+    if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::deformable) {
       saveDeformableState(dirName);
-    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::rigid) {
+    } else if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::rigid) {
       saveRigidState(dirName);
     }
   }
@@ -502,6 +505,7 @@ public:
     save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
     save2DFile(dirName + "shapes.dat", dpm_->getParticleShapes(), 3); // 3 is for area, perimeter and shape parameter
+    save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
   }
 
   void saveDeformableActiveState(string dirName) {
@@ -521,8 +525,7 @@ public:
   }
 
   void saveContacts(string dirName) {
-    dpm_->calcContacts(0);
-    save2DFile(dirName + "contacts.dat", dpm_->getContacts(), dpm_->contactLimit);
+    save2DFile(dirName + "contacts.dat", dpm_->getContacts(), dpm_->contactListSize);
   }
 
   void saveNeighbors(string dirName) {
@@ -539,15 +542,35 @@ public:
     }
   }
 
-  void saveCellNeighbors(string dirName) {
+  void saveInitialNeighbors(string dirName, string fileName1="initialNeighbors.dat", string fileName2="initialContacts.dat") {
     if(dpm_->simControl.neighborType == simControlStruct::neighborEnum::neighbor) {
-      save2DIndexFile(dirName + "cellNeighbors.dat", dpm_->getParticleNeighbors(), dpm_->partNeighborListSize);
+      save2DIndexFile(dirName + fileName1, dpm_->getNeighbors(), dpm_->neighborListSize);
+      save2DIndexFile(dirName + fileName2, dpm_->getContacts(), dpm_->contactListSize);
     }
   }
 
   void saveConfiguration(string dirName) {
     savePacking(dirName);
     saveNeighbors(dirName);
+  }
+
+  void saveDriveParams(string dirName, double damping) {
+    string fileParams = dirName + "driveParams.dat";
+    ofstream saveParams(fileParams.c_str());
+    openOutputFile(fileParams);
+    saveParams << "damping" << "\t" << damping << endl;
+    if(dpm_->simControl.particleType == simControlStruct::particleEnum::active) {
+      double driving, taup;
+      dpm_->getSelfPropulsionParams(driving, taup);
+      saveParams << "taup" << "\t" << taup << endl;
+      saveParams << "f0" << "\t" << driving << endl;
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeShape) {
+      double l0Tau, l0Diff;
+      dpm_->getActiveTensionParams(l0Tau, l0Diff);
+      saveParams << "l0Tau" << "\t" << l0Tau << endl;
+      saveParams << "l0Diff" << "\t" << l0Diff << endl;
+    }
+    saveParams.close();
   }
 
   void saveSPDPMPacking(string dirName) {

@@ -24,10 +24,8 @@ class SimConfig // initializer
 {
 public:
   double Tinject;
-  double Dr;
-  double driving;
   SimConfig() = default;
-  SimConfig(double Tin, double Dr, double driving):Tinject(Tin), Dr(Dr), driving(driving) {}
+  SimConfig(double Tin):Tinject(Tin){}
 };
 
 class SimInterface // integration functions
@@ -35,21 +33,16 @@ class SimInterface // integration functions
 public:
   DPM2D * dpm_;
   SimConfig config;
-  double lcoeff1;
-  double lcoeff2;
-  double lcoeff3;
-  double noiseVar;
+  double noise = 0; // this is just a choice
   double gamma = 1; // this is just a choice
   long firstIndex = 10;
-  double mass = 1;
   thrust::device_vector<double> d_rand;
   thrust::device_vector<double> d_rando;
-  thrust::device_vector<double> d_pActiveAngle; // for decoupled rotation and activity angles
   thrust::device_vector<double> d_thermalVel; // for brownian noise of soft particles
 
   SimInterface() = default;
   SimInterface(DPM2D * dpmPtr, SimConfig config):dpm_(dpmPtr),config(config){}
-  ~SimInterface();
+  virtual ~SimInterface() = default;
 
   virtual void injectKineticEnergy() = 0;
   virtual void updatePosition(double timeStep) = 0;
@@ -75,25 +68,34 @@ public:
   virtual void integrate();
 };
 
-// Langevin2 integrator child of Langevin
-class Langevin2: public Langevin
+// BAOAB integrator child of Langevin
+class BAOAB: public Langevin
 {
 public:
-  Langevin2() = default;
-  Langevin2(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
+  BAOAB() = default;
+  BAOAB(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
 
-  virtual void updatePosition(double timeStep);
-  virtual void updateVelocity(double timeStep);
   virtual void updateThermalVel();
   virtual void integrate();
 };
 
-// Active Langevin integrator child of Langevin2
-class ActiveLangevin: public Langevin2
+// Brownian integrator child of Langevin
+class Brownian: public Langevin
 {
 public:
-  ActiveLangevin() = default;
-  ActiveLangevin(DPM2D * dpmPtr, SimConfig config) : Langevin2:: Langevin2(dpmPtr, config){;}
+  Brownian() = default;
+  Brownian(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
+
+  virtual void updateThermalVel();
+  virtual void integrate();
+};
+
+// Driven Brownian integrator child of Langevin
+class DrivenBrownian: public Langevin
+{
+public:
+  DrivenBrownian() = default;
+  DrivenBrownian(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
 
   virtual void updateThermalVel();
   virtual void integrate();
@@ -106,7 +108,6 @@ public:
   NVE() = default;
   NVE(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
   
-  virtual void injectKineticEnergy();
   virtual void integrate();
 };
 
@@ -121,47 +122,13 @@ public:
   virtual void integrate();
 };
 
-// Brownian integrator child of NVE
-class Brownian: public NVE
-{
-public:
-  Brownian() = default;
-  Brownian(DPM2D * dpmPtr, SimConfig config) : NVE:: NVE(dpmPtr, config){;}
-
-  virtual void updateVelocity(double timeStep);
-  virtual void integrate();
-};
-
-// Active Brownian integrator child of NVE
-class ActiveBrownian: public NVE
-{
-public:
-  ActiveBrownian() = default;
-  ActiveBrownian(DPM2D * dpmPtr, SimConfig config) : NVE:: NVE(dpmPtr, config){;}
-
-  virtual void updateVelocity(double timeStep);
-  virtual void integrate();
-};
-
-// Active Brownian integrator with damping on l0 child of NVE
-class ActiveBrownianPlastic: public NVE
-{
-public:
-  ActiveBrownianPlastic() = default;
-  ActiveBrownianPlastic(DPM2D * dpmPtr, SimConfig config) : NVE:: NVE(dpmPtr, config){;}
-
-  virtual void updatePosition(double timeStep);
-  virtual void updateVelocity(double timeStep);
-  virtual void integrate();
-};
-
 //********************* integrators for rigid particles **********************//
-// Rigid Langevin integrator child of Langevin2
-class RigidLangevin: public Langevin2
+// Rigid Langevin integrator child of Langevin
+class RigidLangevin: public Langevin
 {
 public:
   RigidLangevin() = default;
-  RigidLangevin(DPM2D * dpmPtr, SimConfig config) : Langevin2:: Langevin2(dpmPtr, config){;}
+  RigidLangevin(DPM2D * dpmPtr, SimConfig config) : Langevin:: Langevin(dpmPtr, config){;}
 
   virtual void injectKineticEnergy();
   virtual void updatePosition(double timeStep);
@@ -170,7 +137,6 @@ public:
   virtual void integrate();
 };
 
-//****************** integrators for deformable particles ********************//
 // Langevin integrator child of SimulatorInterface
 class RigidNVE: public RigidLangevin
 {

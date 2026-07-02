@@ -22,7 +22,9 @@ using std::string;
 struct simControlStruct {
   enum class simulationEnum {gpu, cpu, omp} simulationType;
   enum class geometryEnum {normal, fixedBox, fixedSides, roundBox} geometryType;
-  enum class particleEnum {deformable, rigid} particleType;
+  enum class particleEnum {passive, active, activeShape} particleType;
+  enum class shapeEnum {deformable, rigid} shapeType;
+  enum class noiseEnum {langevin, baoab, brownian, drivenBrownian} noiseType;
   enum class potentialEnum {harmonic, lennardJones, adhesive, wca} potentialType;
   enum class interactionEnum {vertexVertex, vertexSmooth, cellSmooth, all} interactionType;
   enum class neighborEnum {neighbor, cell, allToAll} neighborType;
@@ -82,6 +84,10 @@ public:
   double el; // segment
   double eb; // bending
   double ec; // interaction
+  // self-propulsion parameters
+  double driving, taup;
+  // active tension parameters
+  double l0Tau, l0Diff;
   // attraction constants
   double l1, l2;
   // Lennard-Jones constants
@@ -100,7 +106,7 @@ public:
   thrust::device_vector<double> d_length;
   thrust::device_vector<double> d_theta;
   thrust::device_vector<double> d_perimeter;
-  thrust::device_vector<double> d_l0Vel;
+  thrust::device_vector<double> d_l0Rest;
   thrust::device_vector<double> d_a0;
   thrust::device_vector<double> d_area;
   thrust::device_vector<double> d_theta0;
@@ -118,6 +124,10 @@ public:
   thrust::device_vector<double> d_disp;
   thrust::device_vector<double> d_initialPos;
   thrust::device_vector<double> d_delta;
+  thrust::device_vector<double> d_randAngle;
+  thrust::device_vector<double> d_velSquared;
+  thrust::device_vector<double> d_particleVelSquared;
+  thrust::device_vector<double> d_psi6;
 
   // particle variables
   thrust::device_vector<double> d_particlePos;
@@ -149,11 +159,10 @@ public:
   thrust::device_vector<double> d_perParticleStress;
 
   //contact list
-  thrust::device_vector<long> d_numContacts;
   thrust::device_vector<long> d_contactList;
-  thrust::device_vector<double> d_contactVectorList;
+  thrust::device_vector<long> d_maxContactList;
   long maxContacts;
-  long contactLimit;
+  long contactListSize;
   // neighbor list
   thrust::device_vector<long> d_neighborList;
   thrust::device_vector<long> d_maxNeighborList;
@@ -161,6 +170,15 @@ public:
   thrust::host_vector<long> h_maxNeighborList; //HOST
   long maxNeighbors;
 	long neighborListSize;
+	// particle neighbor list
+  thrust::device_vector<long> d_partNeighborList;
+  thrust::device_vector<long> d_partMaxNeighborList;
+  long partMaxNeighbors;
+	long partNeighborListSize;
+  // smooth neighbor list
+  thrust::host_vector<long> h_smoothNeighborList; //HOST
+  thrust::host_vector<long> h_maxSmoothNeighborList; //HOST
+	long smoothNeighborListSize;
   // cell list
   thrust::host_vector<long> h_header;
   thrust::host_vector<long> h_linkedList;
@@ -169,16 +187,6 @@ public:
   long numCells;
   long maxCellNeighbors;
   long cellNeighborListSize;
-	// particle neighbor list
-  thrust::device_vector<long> d_numPartNeighbors;
-  thrust::device_vector<long> d_partNeighborList;
-  thrust::device_vector<long> d_partMaxNeighborList;
-  long partMaxNeighbors;
-	long partNeighborListSize;
-  long neighborLimit;
-  thrust::host_vector<long> h_smoothNeighborList; //HOST
-  thrust::host_vector<long> h_maxSmoothNeighborList; //HOST
-	long smoothNeighborListSize;
 
   void printDeviceProperties();
 
@@ -222,6 +230,12 @@ public:
 
   void setParticleType(simControlStruct::particleEnum particleType_);
 	simControlStruct::particleEnum getParticleType();
+
+  void setShapeType(simControlStruct::shapeEnum shapeType_);
+	simControlStruct::shapeEnum getShapeType();
+
+  void setNoiseType(simControlStruct::noiseEnum noiseType_);
+	simControlStruct::noiseEnum getNoiseType();
 
   void setPotentialType(simControlStruct::potentialEnum potentialType_);
 	simControlStruct::potentialEnum getPotentialType();
@@ -306,6 +320,8 @@ public:
 
   void calcParticlePositions();
 
+  void calcParticleVelocities();
+
   void setDefaultParticleRadii();
 
   void setParticleRadii(thrust::host_vector<double> &particleRad_);
@@ -345,6 +361,8 @@ public:
 
   void setInitialPositions();
 
+  void setInitialParticlePositions();
+
   void setVertexVelocities(thrust::host_vector<double> &vel_);
 	thrust::host_vector<double> getVertexVelocities();
 
@@ -368,6 +386,12 @@ public:
 
   thrust::host_vector<long> getNeighbors();
 
+  thrust::host_vector<long> getContacts();
+
+  void printNeighbors();
+
+  void printContacts();
+
   thrust::host_vector<long> getSmoothNeighbors();
 
   thrust::host_vector<long> getLinkedList();
@@ -375,12 +399,6 @@ public:
   thrust::host_vector<long> getListHeader();
 
   thrust::host_vector<long> getCellIndexList();
-
-  thrust::host_vector<long> getContacts();
-
-  void printNeighbors();
-
-  void printContacts();
 
   double getPotentialEnergy();
 
@@ -390,7 +408,21 @@ public:
 
   double getTemperature();
 
-  double getTotalEnergy();
+  double getParticlePotentialEnergy();
+
+  double getParticleKineticEnergy();
+
+  double getParticleEnergy();
+
+  double getParticleTemperature();
+
+  double getShapeKineticEnergy();
+
+  double getShapeTemperature();
+  
+  double getShapeCOMEnergyRatio();
+
+  double getRigidKineticEnergy();
 
   void adjustKineticEnergy(double prevEtot);
 
@@ -442,6 +474,8 @@ public:
 
   double getParticleISF(double waveNumber_);
 
+  double getParticleHexaticOrder();
+
   double getAreaFluctuation();
 
   // initialization functions
@@ -490,9 +524,17 @@ public:
   // force and energy
   void setEnergyCosts(double ea_, double el_, double eb_, double ec_);
 
-  void setBoxEnergyCost(double ew_);
+  void setSelfPropulsionParams(double driving_, double taup_);
+
+  void getSelfPropulsionParams(double &driving_, double &taup_);
+
+  void setActiveTensionParams(double l0Tau_, double l0Diff_);
+
+  void getActiveTensionParams(double &l0Tau_, double &l0Diff_);
 
   void setAttractionConstants(double l1_, double l2_);
+
+  void setBoxEnergyCost(double ew_);
 
   void setLJcutoff(double LJcutoff_);
 
@@ -502,37 +544,42 @@ public:
 
   double setTimeStep(double dt_);
 
-  void setTwoParticleTest(double lx, double ly, double y0, double y1, double vel1);
-
-  void firstUpdate(double timeStep);
-
-  void secondUpdate(double timeStep);
-
-  void testDeformableInteraction(double timeStep);
-
-  void firstRigidUpdate(double timeStep);
-
-  void secondRigidUpdate(double timeStep);
-
-  void testRigidInteraction(double timeStep);
-
-  void testInteraction(double timeStep);
-
-  void printTwoParticles();
-
   void calcForceEnergy();
+
+  void calcShapeForceEnergy();
+
+  void addSelfPropulsion();
+
+  void updateRestLength();
+
+  void calcForceEnergyGPU();
+
+  void calcVertexForceTorque();
+
+  void transferForceToParticles();
+
+  void calcVertexSmoothForceTorque();
+
+  void calcTorqueAndMomentOfInertia();
+
+  void transferSmoothForceToParticles();
+
+  void calcRigidForceEnergy();
+
+  void calcStressTensor();
+
+  void calcPerParticleStressTensor();
+
+  void calcNeighborForces();
 
   thrust::host_vector<double> getInteractionForces();
 
   thrust::host_vector<double> getInteractionForcesGPU();
 
+  // Serial and parallel (OpenMP) CPU functions for testing and debugging
   void calcForceEnergyCPU();
 
   void calcForceEnergyOMP();
-
-  void calcShapeForceEnergy();
-
-  void calcForceEnergyGPU();
 
   double pbcDistance(double x1, double x2, double size);
 
@@ -562,30 +609,31 @@ public:
 
   void calcCellListSmoothInteraction();
 
-  void calcVertexForceTorque();
+  // Test functions for force and energy calculations
+  void setTwoParticleTest(double lx, double ly, double y0, double y1, double vel1);
 
-  void transferForceToParticles();
+  void firstUpdate(double timeStep);
 
-  void calcVertexSmoothForceTorque();
+  void secondUpdate(double timeStep);
 
-  void calcTorqueAndMomentOfInertia();
+  void testDeformableInteraction(double timeStep);
 
-  void transferSmoothForceToParticles();
+  void firstRigidUpdate(double timeStep);
 
-  void calcRigidForceEnergy();
+  void secondRigidUpdate(double timeStep);
 
-  void calcStressTensor();
+  void testRigidInteraction(double timeStep);
 
-  void calcPerParticleStressTensor();
+  void testInteraction(double timeStep);
 
-  void calcNeighborForces();
+  void printTwoParticles();
 
-  // contacts and neighbors
-  void calcParticleNeighbors();
+  // Contacts and neighbors
+  void calcContacts();
 
-  void calcContacts(double gapSize);
+  void calcGeometricContacts();
 
-  thrust::host_vector<long> getContactVectors(double gapSize);
+  void syncContactsToDevice();
 
   void calcNeighbors(double cutDistance);
 
@@ -611,19 +659,9 @@ public:
 
   double getRigidMaxUnbalancedForce();
 
-  double getParticlePotentialEnergy();
-
-  double getParticleKineticEnergy();
-
-  double getRigidKineticEnergy();
-
-  double getParticleTemperature();
-
   double getParticleDrift();
 
-  thrust::host_vector<long> getParticleNeighbors();
-
-  // minimizers
+  // Minimizers
   void initFIRE(std::vector<double> &FIREparams, long minStep, long maxStep, long numDOF);
 
   void setParticleMassFIRE();
@@ -638,18 +676,10 @@ public:
 
   void rigidFIRELoop();
 
-  // integrators
+  // Integrators
   void initLangevin(double Temp, double gamma, bool readState);
 
   void langevinLoop();
-
-  void initLangevin2(double Temp, double gamma, bool readState);
-
-  void langevin2Loop();
-
-  void initActiveLangevin(double Temp, double Dr, double driving, double gamma, bool readState);
-
-  void activeLangevinLoop();
 
   void initNVE(double Tin, bool readState);
 
@@ -659,19 +689,7 @@ public:
 
   void NVERescaleLoop();
 
-  void initBrownian(double Temp, double gamma, bool readState);
-
-  void brownianLoop();
-
-  void initActiveBrownian(double Dr, double driving, bool readState);
-
-  void activeBrownianLoop();
-
-  void initActiveBrownianPlastic(double Dr, double driving, double gamma, bool readState);
-
-  void activeBrownianPlasticLoop();
-
-  // integrators for rigid particles
+  // Integrators for rigid particles
   void initRigidLangevin(double Temp, double gamma, bool readState);
 
   void rigidLangevinLoop();

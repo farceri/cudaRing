@@ -12,7 +12,6 @@
 #include <string>
 #include <iostream>
 #include <iomanip>
-#include <stdlib.h>
 #include <math.h>
 #include <functional>
 #include <utility>
@@ -27,17 +26,17 @@ int main(int argc, char **argv) {
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = true, logSave = false, linSave = true, saveFinal = true;
+  bool readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
   // input variables
-  std::string inDir = argv[1], potType = argv[7], intType = argv[8], mode = argv[10];
-  double timeStep = atof(argv[2]), Tinject = atof(argv[3]);
-  long maxStep = atof(argv[4]), initialStep = atof(argv[5]), numParticles = atol(argv[6]);
+  std::string inDir = argv[1], potType = argv[10], noiseType = argv[11], mode = argv[12];
+  double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]), l0Tau = atof(argv[5]), l0Diff = atof(argv[6]);
+  long maxStep = atof(argv[7]), initialStep = atof(argv[8]), numParticles = atol(argv[9]);
   // other variables
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
-  long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10); 
-  double cutDistance, cutoff = 0.5, timeUnit = 0, sigma, size, waveQ;
+  long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
+  double cutDistance, cutoff = 0.5, timeUnit = 0, diffUnit = 0, sigma, size, waveQ;
   double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5;
-  std::string outDir, energyFile, currentDir, dirSample, whichDynamics;
+  std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "shape/";
   // set simulation mode
   if(mode == "change") {
     readAndMakeNewDir = true;
@@ -60,24 +59,16 @@ int main(int argc, char **argv) {
   }
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
-  if(potType == "lj") {
-    dpm.setPotentialType(simControlStruct::potentialEnum::lennardJones);
-    whichDynamics = "nve-lj/";
-    dpm.setLJcutoff(LJcut);
-  } else if(potType == "wca") {
-    dpm.setPotentialType(simControlStruct::potentialEnum::wca);
-    whichDynamics = "nve-wca/";
-  } else {
-    cout << "Setting default harmonic potential" << endl;
-    whichDynamics = "nve/";
-  }
-  if(intType == "smooth") {
+  dpm.setParticleType(simControlStruct::particleEnum::activeShape);
+  dpm.setNoiseType(simControlStruct::noiseEnum::langevin);
+  dpm.setPotentialType(simControlStruct::potentialEnum::wca);
+  if(smooth) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
     dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
   }
-
+  
   // set input and output
-  dirSample = whichDynamics + "T" + argv[3] + "/";
+  dirSample = whichDynamics + "l0Tau" + argv[5] + "-l0Diff" + argv[6] + "/";
   ioDPMFile ioDPM(&dpm);
   if (readAndSaveSameDir == true) {//keep running the same dynamics
     readState = true;
@@ -96,8 +87,7 @@ int main(int argc, char **argv) {
   } else {//start a new dyanmics
     if(readAndMakeNewDir == true) {
       readState = true;
-      outDir = inDir + "../../" + dirSample;
-      //outDir = inDir + "../../../" + dirSample;
+      outDir = inDir + "../" + dirSample;
     } else {
       if(std::experimental::filesystem::exists(inDir + whichDynamics) == false) {
         std::experimental::filesystem::create_directory(inDir + whichDynamics);
@@ -112,24 +102,35 @@ int main(int argc, char **argv) {
   if(readState == true) {
     ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
   }
+  numVertices = dpm.getNumVertices();
   // output file
   energyFile = outDir + "energy.dat";
   ioDPM.openEnergyFile(energyFile);
 
   // initialize simulation
   sigma = dpm.getMeanParticleSize();
-  timeUnit = sigma / sqrt(ec);//epsilon and mass are 1 sqrt(m sigma^2 / epsilon)
+  timeUnit = sigma / sqrt(ec);
+  diffUnit = sigma * sigma / timeUnit;
   timeStep = dpm.setTimeStep(timeStep * timeUnit);
-  cout << "Time step: " << timeStep << " sigma: " << sigma << " Tinject: " << Tinject << endl;
-  numVertices = dpm.getNumVertices();
-  dpm.initNVE(Tinject, readState);
-  if(readAndMakeNewDir == true) {
-    dpm.adjustTemperature(Tinject);
+  cout << "Units - time: " << timeUnit << " space: " << sigma << " time step: " << timeStep << endl;
+  if(noiseType == "drivenBrownian") {
+    cout << "Driven Shape - damping: " << damping << " l0Tau: " << l0Tau << " l0Diff: " << l0Diff << endl;
+  } else {
+    cout << "Thermostat - damping: " << damping << " Tinject: " << Tinject << endl;
+    cout << "Active Shape - l0Tau: " << l0Tau << " l0Diff: " << l0Diff << endl;
   }
+  damping /= timeUnit;
+  l0Tau *= timeUnit;
+  l0Diff *= diffUnit;
+  dpm.setActiveTensionParams(l0Tau, l0Diff);
+  ioDPM.saveDriveParams(outDir, damping);
+
+  // initialize integration scheme
+  dpm.initLangevin(Tinject, damping, readState);
   size = 2 * dpm.getMeanVertexRadius();
   cutDistance = dpm.setDisplacementCutoff(cutoff, size);
   dpm.calcNeighbors(cutDistance);
-  dpm.calcForceEnergy();
+  dpm.calcForceEnergy();;
   dpm.resetUpdateCount();
   waveQ = dpm.getDeformableWaveNumber();
   // record simulation time
@@ -138,18 +139,19 @@ int main(int argc, char **argv) {
   cudaEventCreate(&start);
   cudaEventCreate(&stop);
   cudaEventRecord(start, 0);
-  
-  // run NVE integrator
+
+  // run integrator
   ioDPM.savePacking(outDir);
   ioDPM.saveInitialNeighbors(outDir);
   while(step != maxStep) {
-    dpm.NVELoop();
+    dpm.langevinLoop();
     if(step % saveEnergyFreq == 0) {
       ioDPM.saveDeformableEnergy(step, timeStep, numVertices);
       if(step % checkPointFreq == 0) {
-        cout << "NVE: current step: " << step;
+        cout << "Active Shape: current step: " << step;
         cout << " E/N: " << dpm.getEnergy() / numVertices;
         cout << " T: " << dpm.getTemperature();
+        cout << " Ks/Kc: " << dpm.getShapeCOMEnergyRatio();
         cout << " ISF: " << dpm.getParticleISF(waveQ);
         cout << " phi: " << dpm.getPhi();
         updateCount = dpm.getUpdateCount();
@@ -161,11 +163,7 @@ int main(int argc, char **argv) {
         dpm.resetUpdateCount();
         if(saveFinal == true) {
       	  ioDPM.savePacking(outDir);
-          //ioDPM.saveNeighbors(outDir);
         }
-      }
-      if(readAndMakeNewDir == true) {
-        dpm.adjustTemperature(Tinject);
       }
     }
     if(logSave == true) {
@@ -180,15 +178,13 @@ int main(int argc, char **argv) {
         currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
         ioDPM.saveState(currentDir);
-        //ioDPM.saveNeighbors(currentDir);
       }
     }
     if(linSave == true) {
       if((step % linFreq) == 0) {
-        currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";  
+        currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
         ioDPM.saveState(currentDir);
-        //ioDPM.saveNeighbors(currentDir);
       }
     }
     step += 1;
@@ -201,7 +197,6 @@ int main(int argc, char **argv) {
   // save final configuration
   if(saveFinal == true) {
     ioDPM.savePacking(outDir);
-    //ioDPM.saveNeighbors(outDir);
   }
   ioDPM.closeEnergyFile();
 

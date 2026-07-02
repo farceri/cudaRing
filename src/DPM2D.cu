@@ -53,7 +53,9 @@ DPM2D::DPM2D(long nParticles, long dim, long nVertexPerParticle) {
   setNumVertexPerParticle(numVertexPerParticle);
   setNumVertices(numVertices);
 	simControl.simulationType = simControlStruct::simulationEnum::gpu;
-	simControl.particleType = simControlStruct::particleEnum::deformable;
+	simControl.particleType = simControlStruct::particleEnum::passive;
+	simControl.shapeType = simControlStruct::shapeEnum::deformable;
+	simControl.noiseType = simControlStruct::noiseEnum::langevin;
 	simControl.potentialType = simControlStruct::potentialEnum::harmonic;
 	simControl.interactionType = simControlStruct::interactionEnum::vertexVertex;
 	simControl.neighborType = simControlStruct::neighborEnum::neighbor;
@@ -84,6 +86,8 @@ DPM2D::DPM2D(long nParticles, long dim, long nVertexPerParticle) {
   syncNeighborsToDevice();
   // initialize contacts and neighbors
   initContacts(numParticles);
+  syncContactsToDevice();
+  // TODO: add option to initialize particle neighbors only when needed
   initParticleNeighbors(numParticles);
   syncParticleNeighborsToDevice();
   if(cudaGetLastError()) cout << "DPM2D():: cudaGetLastError(): " << cudaGetLastError() << endl;
@@ -138,14 +142,16 @@ void DPM2D::initDynamicalVariables(long numVertices_) {
   d_vel.resize(numVertices_ * nDim);
   d_force.resize(numVertices_ * nDim);
   d_energy.resize(numVertices_);
-  d_lastPos.resize(numVertices_ * nDim);
   d_disp.resize(numVertices_);
+  d_lastPos.resize(numVertices_ * nDim);
+  d_velSquared.resize(numVertices_ * nDim);
   thrust::fill(d_pos.begin(), d_pos.end(), double(0));
   thrust::fill(d_vel.begin(), d_vel.end(), double(0));
   thrust::fill(d_force.begin(), d_force.end(), double(0));
   thrust::fill(d_energy.begin(), d_energy.end(), double(0));
-  thrust::fill(d_lastPos.begin(), d_lastPos.end(), double(0));
   thrust::fill(d_disp.begin(), d_disp.end(), double(0));
+  thrust::fill(d_lastPos.begin(), d_lastPos.end(), double(0));
+  thrust::fill(d_velSquared.begin(), d_velSquared.end(), double(0));
   switch (simControl.geometryType) {
     case simControlStruct::geometryEnum::fixedBox:
     case simControlStruct::geometryEnum::fixedSides:
@@ -168,13 +174,15 @@ void DPM2D::initParticleVariables(long numParticles_) {
   d_particleEnergy.resize(numParticles_);
   d_particleDisp.resize(numParticles_);
   d_particleLastPos.resize(numParticles_ * nDim);
+  d_particleVelSquared.resize(numParticles_ * nDim);
+  d_psi6.resize(numParticles_);
   thrust::fill(d_particleVel.begin(), d_particleVel.end(), double(0));
   thrust::fill(d_particleForce.begin(), d_particleForce.end(), double(0));
   thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
   thrust::fill(d_particleDisp.begin(), d_particleDisp.end(), double(0));
   thrust::fill(d_particleLastPos.begin(), d_particleLastPos.end(), double(0));
-  d_perParticleStress.resize(numParticles_ * nDim * nDim);
-  thrust::fill(d_perParticleStress.begin(), d_perParticleStress.end(), double(0));
+  thrust::fill(d_particleVelSquared.begin(), d_particleVelSquared.end(), double(0));
+  thrust::fill(d_psi6.begin(), d_psi6.end(), double(0));
   switch (simControl.geometryType) {
     case simControlStruct::geometryEnum::fixedBox:
     case simControlStruct::geometryEnum::fixedSides:
@@ -213,17 +221,12 @@ void DPM2D::initRotationalVariables(long numVertices_, long numParticles_) {
 }
 
 void DPM2D::initContacts(long numParticles_) {
-  long maxContacts = 8 * nDim; // guess
-  d_numContacts.resize(numParticles_);
-  d_contactList.resize(numParticles_ * maxContacts);
-  d_numPartNeighbors.resize(numParticles_);
-  d_partNeighborList.resize(numParticles_ * maxContacts);
-  d_contactVectorList.resize(numParticles_ * nDim * maxContacts);
-  thrust::fill(d_numContacts.begin(), d_numContacts.end(), -1L);
-  thrust::fill(d_contactList.begin(), d_contactList.end(), double(0));
-  thrust::fill(d_numPartNeighbors.begin(), d_numPartNeighbors.end(), -1L);
-  thrust::fill(d_partNeighborList.begin(), d_partNeighborList.end(), double(0));
-  thrust::fill(d_contactVectorList.begin(), d_contactVectorList.end(), double(0));
+  contactListSize = 4 * nDim; // guess
+  maxContacts = 0;
+  d_contactList.resize(numParticles_ * contactListSize);
+  d_maxContactList.resize(numParticles_);
+  thrust::fill(d_contactList.begin(), d_contactList.end(), -1L);
+  thrust::fill(d_maxContactList.begin(), d_maxContactList.end(), maxContacts);
 }
 
 void DPM2D::initNeighbors(long numVertices_) {
@@ -361,13 +364,22 @@ simControlStruct::geometryEnum DPM2D::getGeometryType() {
 
 void DPM2D::setParticleType(simControlStruct::particleEnum particleType_) {
 	simControl.particleType = particleType_;
-  if(simControl.particleType == simControlStruct::particleEnum::deformable) {
-    cout << "DPM2D::setParticleType: particleType: deformable" << endl;
-  } else if(simControl.particleType == simControlStruct::particleEnum::rigid) {
-    initRotationalVariables(getNumVertices(), getNumParticles());
-    cout << "DPM2D::setParticleType: particleType: rigid" << endl;
+  if(simControl.particleType == simControlStruct::particleEnum::passive) {
+    cout << "DPM2D::setParticleType: particleType: passive" << endl;
+  } else if(simControl.particleType == simControlStruct::particleEnum::active) {
+    d_particleAngle.resize(numParticles);
+    d_randAngle.resize(numParticles);
+    thrust::fill(d_particleAngle.begin(), d_particleAngle.end(), double(0));
+    thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
+    cout << "DPM2D::setParticleType: particleType: active" << endl;
+  } else if(simControl.particleType == simControlStruct::particleEnum::activeShape) {
+    d_l0Rest.resize(numVertices);
+    thrust::fill(d_l0Rest.begin(), d_l0Rest.end(), double(0));
+    d_randAngle.resize(numParticles);
+    thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
+    cout << "DPM2D::setParticleType: particleType: activeShape" << endl;
   } else {
-    cout << "DPM2D::setParticleType: please specify valid particleType: deformable or rigid" << endl;
+    cout << "DPM2D::setParticleType: please specify valid particleType: passive, active or activeShape" << endl;
   }
 	syncSimControlToDevice();
 }
@@ -375,6 +387,45 @@ void DPM2D::setParticleType(simControlStruct::particleEnum particleType_) {
 simControlStruct::particleEnum DPM2D::getParticleType() {
 	syncSimControlFromDevice();
 	return simControl.particleType;
+}
+
+void DPM2D::setShapeType(simControlStruct::shapeEnum shapeType_) {
+	simControl.shapeType = shapeType_;
+  if(simControl.shapeType == simControlStruct::shapeEnum::deformable) {
+    cout << "DPM2D::setShapeType: shapeType: deformable" << endl;
+  } else if(simControl.shapeType == simControlStruct::shapeEnum::rigid) {
+    initRotationalVariables(getNumVertices(), getNumParticles());
+    cout << "DPM2D::setShapeType: shapeType: rigid" << endl;
+  } else {
+    cout << "DPM2D::setShapeType: please specify valid shapeType: deformable or rigid" << endl;
+  }
+	syncSimControlToDevice();
+}
+
+simControlStruct::shapeEnum DPM2D::getShapeType() {
+	syncSimControlFromDevice();
+	return simControl.shapeType;
+}
+
+void DPM2D::setNoiseType(simControlStruct::noiseEnum noiseType_) {
+	simControl.noiseType = noiseType_;
+  if(simControl.noiseType == simControlStruct::noiseEnum::langevin) {
+    cout << "DPM2D::setNoiseType: noiseType: langevin" << endl;
+  } else if(simControl.noiseType == simControlStruct::noiseEnum::baoab) {
+    cout << "DPM2D::setNoiseType: noiseType: baoab" << endl;
+  } else if(simControl.noiseType == simControlStruct::noiseEnum::brownian) {
+    cout << "DPM2D::setNoiseType: noiseType: brownian" << endl;
+  } else if(simControl.noiseType == simControlStruct::noiseEnum::drivenBrownian) {
+    cout << "DPM2D::setNoiseType: noiseType: drivenBrownian" << endl;
+  } else {
+    cout << "DPM2D::setNoiseType: please specify valid noiseType: langevin, baoab, brownian or drivenBrownian" << endl;
+  }
+	syncSimControlToDevice();
+}
+
+simControlStruct::noiseEnum DPM2D::getNoiseType() {
+	syncSimControlFromDevice();
+	return simControl.noiseType;
 }
 
 void DPM2D::setPotentialType(simControlStruct::potentialEnum potentialType_) {
@@ -737,7 +788,6 @@ void DPM2D::calcParticleShape() {
   double *theta = thrust::raw_pointer_cast(&d_theta[0]);
   double *area = thrust::raw_pointer_cast(&d_area[0]);
   double *perimeter = thrust::raw_pointer_cast(&d_perimeter[0]);
-
   kernelCalcParticleShape<<<dimGrid, dimBlock>>>(pos, length, theta, area, perimeter);
 }
 
@@ -745,8 +795,14 @@ void DPM2D::calcParticlePositions() {
   // vertex and particle position pointers
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
   double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
-
   kernelCalcParticlePositions<<<dimGrid, dimBlock>>>(pos, particlePos);
+}
+
+void DPM2D::calcParticleVelocities() {
+  // vertex and particle velocity pointers
+  const double *vel = thrust::raw_pointer_cast(&d_vel[0]);
+  double *particleVel = thrust::raw_pointer_cast(&d_particleVel[0]);
+  kernelCalcParticleVelocities<<<dimGrid, dimBlock>>>(vel, particleVel);
 }
 
 void DPM2D::setDefaultParticleRadii() {
@@ -866,6 +922,13 @@ void DPM2D::setInitialPositions() {
   d_initialPos = d_pos;
 }
 
+void DPM2D::setInitialParticlePositions() {
+  d_particleInitPos.resize(numParticles * nDim);
+  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
+  calcParticlePositions();
+  d_particleInitPos = d_particlePos;
+}
+
 void DPM2D::setVertexVelocities(thrust::host_vector<double> &vel_) {
   d_vel = vel_;
 }
@@ -953,23 +1016,8 @@ thrust::host_vector<long> DPM2D::getNeighbors() {
   return neighborListFromDevice;
 }
 
-thrust::host_vector<long> DPM2D::getSmoothNeighbors() {
-  return h_smoothNeighborList;
-}
-
-thrust::host_vector<long> DPM2D::getLinkedList() {
-  return h_linkedList;
-}
-
-thrust::host_vector<long> DPM2D::getListHeader() {
-  return h_header;
-}
-
-thrust::host_vector<long> DPM2D::getCellIndexList() {
-  return h_cellIndexList;
-}
-
 thrust::host_vector<long> DPM2D::getContacts() {
+  calcContacts();
   thrust::host_vector<long> contactListFromDevice;
   contactListFromDevice = d_contactList;
   return contactListFromDevice;
@@ -988,11 +1036,27 @@ void DPM2D::printNeighbors() {
 void DPM2D::printContacts() {
   for (long particleId = 0; particleId < numParticles; particleId++) {
     cout << "particleId: " << particleId << " list of contacts: ";
-    for (long contactId = 0; contactId < d_numContacts[particleId]; contactId++) {
-      cout << d_contactList[particleId * contactLimit + contactId] << " ";
+    for (long contactId = 0; contactId < d_maxContactList[particleId]; contactId++) {
+      cout << d_contactList[particleId * contactListSize + contactId] << " ";
     }
     cout << endl;
   }
+}
+
+thrust::host_vector<long> DPM2D::getSmoothNeighbors() {
+  return h_smoothNeighborList;
+}
+
+thrust::host_vector<long> DPM2D::getLinkedList() {
+  return h_linkedList;
+}
+
+thrust::host_vector<long> DPM2D::getListHeader() {
+  return h_header;
+}
+
+thrust::host_vector<long> DPM2D::getCellIndexList() {
+  return h_cellIndexList;
 }
 
 double DPM2D::getPotentialEnergy() {
@@ -1016,11 +1080,10 @@ double DPM2D::getPotentialEnergy() {
 }
 
 double DPM2D::getKineticEnergy() {
-  thrust::device_vector<double> velSquared(d_vel.size());
   // compute squared velocities
-  thrust::transform(d_vel.begin(), d_vel.end(), velSquared.begin(), square());
+  thrust::transform(d_vel.begin(), d_vel.end(), d_velSquared.begin(), square());
   // sum squares
-  return 0.5 * thrust::reduce(velSquared.begin(), velSquared.end());
+  return 0.5 * thrust::reduce(d_velSquared.begin(), d_velSquared.end());
 }
 
 double DPM2D::getEnergy() {
@@ -1028,13 +1091,71 @@ double DPM2D::getEnergy() {
 }
 
 double DPM2D::getTemperature() {
-  return 2. * getKineticEnergy() / (nDim * numVertices);
+  return 2. * getKineticEnergy() / (numVertices * nDim);
 }
 
-double DPM2D::getTotalEnergy() {
-  double etot = getPotentialEnergy();
-  etot += getKineticEnergy();
-  return etot;
+double DPM2D::getParticlePotentialEnergy() {
+  return thrust::reduce(d_particleEnergy.begin(), d_particleEnergy.end(), double(0), thrust::plus<double>());
+}
+
+double DPM2D::getParticleKineticEnergy() {
+  // compute squared velocities
+  thrust::transform(d_particleVel.begin(), d_particleVel.end(), d_particleVelSquared.begin(), square());
+  // sum squares
+  return 0.5 * thrust::reduce(d_particleVelSquared.begin(), d_particleVelSquared.end(), double(0), thrust::plus<double>());
+}
+
+double DPM2D::getParticleEnergy() {
+  return (getPotentialEnergy() + getKineticEnergy());
+}
+
+double DPM2D::getParticleTemperature() {
+  return 2 * getParticleKineticEnergy() / (numParticles * nDim);
+}
+
+double DPM2D::getShapeKineticEnergy() {
+  // substract COM velocity to vertex velocities
+  calcParticleVelocities();
+
+  long s_nDim(nDim);
+  auto r = thrust::counting_iterator<long>(0);
+  double *velSq = thrust::raw_pointer_cast(&d_velSquared[0]);
+  const double *vel = thrust::raw_pointer_cast(&d_vel[0]);
+  const double *pVel = thrust::raw_pointer_cast(&d_particleVel[0]);
+  const long *pIdList = thrust::raw_pointer_cast(&d_particleIdList[0]);
+
+  auto computeRelativeKineticEnergy = [=] __device__ (long vertexId) {
+    long pId = pIdList[vertexId];
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+		  velSq[vertexId * s_nDim + dim] = vel[vertexId * s_nDim + dim] - pVel[pId * s_nDim + dim];
+      velSq[vertexId * s_nDim + dim] *= velSq[vertexId * s_nDim + dim];
+    }
+  };
+
+  thrust::for_each(r, r + numVertices, computeRelativeKineticEnergy);
+  // sum squares
+  return 0.5 * thrust::reduce(d_velSquared.begin(), d_velSquared.end());
+}
+
+double DPM2D::getShapeTemperature() {
+  return 2. * getShapeKineticEnergy() / (nDim * numVertices);
+}
+
+double DPM2D::getShapeCOMEnergyRatio() {
+  return getShapeKineticEnergy() / getParticleKineticEnergy();
+}
+
+double DPM2D::getRigidKineticEnergy() {
+  double ekin = getParticleKineticEnergy();
+  thrust::device_vector<double> angMomentum(d_particleAngvel.size());
+  // multiple angular velocity by distance from axis of rotation
+  thrust::transform(d_particleAngvel.begin(), d_particleAngvel.end(), d_particleRad.begin(), angMomentum.begin(), thrust::multiplies<double>());
+  // compute squared momentum
+  thrust::device_vector<double> rotEnergy(d_particleAngvel.size());
+  thrust::transform(angMomentum.begin(), angMomentum.end(), rotEnergy.begin(), square());
+  ekin += 0.5 * thrust::reduce(rotEnergy.begin(), rotEnergy.end(), double(0), thrust::plus<double>());
+  return ekin;
 }
 
 void  DPM2D::adjustKineticEnergy(double prevEtot) {
@@ -1379,6 +1500,13 @@ double DPM2D::getParticleISF(double waveNumber_) {
   double *particleSF = thrust::raw_pointer_cast(&d_particleSF[0]);
   kernelCalcParticleScatteringFunction<<<partDimGrid,dimBlock>>>(particlePos, particleInitPos, particleSF, waveNumber_);
   return thrust::reduce(d_particleSF.begin(), d_particleSF.end(), double(0), thrust::plus<double>()) / numParticles;
+}
+
+double DPM2D::getParticleHexaticOrder() {
+  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
+  double *psi6 = thrust::raw_pointer_cast(&d_psi6[0]);
+  kernelCalcHexaticOrderParameter<<<partDimGrid,dimBlock>>>(particlePos, psi6);
+  return thrust::reduce(d_psi6.begin(), d_psi6.end(), double(0), thrust::plus<double>()) / numParticles;
 }
 
 double DPM2D::getAreaFluctuation() {
@@ -1755,6 +1883,31 @@ void DPM2D::setEnergyCosts(double ea_, double el_, double eb_, double ec_) {
   cudaMemcpyToSymbol(d_ec, &ec, sizeof(ec));
 }
 
+void DPM2D::setSelfPropulsionParams(double driving_, double taup_) {
+  driving = driving_;
+  taup = taup_;
+  //cout << "SP2D::setSelfPropulsionParams:: driving: " << driving << " taup: " << taup << endl;
+}
+
+void DPM2D::getSelfPropulsionParams(double &driving_, double &taup_) {
+  driving_ = driving;
+  taup_ = taup;
+  //cout << "SP2D::getSelfPropulsionParams:: driving: " << driving_ << " taup: " << taup_ << endl;
+}
+
+void DPM2D::setActiveTensionParams(double l0Tau_, double l0Diff_) {
+  l0Tau = l0Tau_;
+  l0Diff = l0Diff_;
+  d_l0Rest = d_l0; // set rest length to initial length
+  //cout << "SP2D::setSelfActiveTensionParams:: l0Tau: " << l0Tau << " l0Diff: " << l0Diff << endl;
+}
+
+void DPM2D::getActiveTensionParams(double &l0Tau_, double &l0Diff_) {
+  l0Tau_ = l0Tau;
+  l0Diff_ = l0Diff;
+  //cout << "SP2D::getActiveTensionParams:: l0Tau: " << l0Tau_ << " l0Diff: " << l0Diff_ << endl;
+}
+
 void DPM2D::setBoxEnergyCost(double ew_) {
   ew = ew_;
   cudaMemcpyToSymbol(d_ew, &ew, sizeof(ew));
@@ -1806,182 +1959,6 @@ double DPM2D::setTimeStep(double dt_) {
   return dt;
 }
 
-void DPM2D::setTwoParticleTest(double lx, double ly, double y0, double y1, double vel1) {
-  setMonoSizeDistribution();
-  if(cudaGetLastError()) cout << "DPM2D():: cudaGetLastError(): " << cudaGetLastError() << endl;
-  thrust::host_vector<double> boxSize(nDim);
-  // set particle radii
-  for (long pId = 0; pId < numParticles; pId++) {
-    d_particleRad[pId] = sqrt((2. * d_a0[pId]) / (d_numVertexInParticleList[pId] * sin(2. * PI / d_numVertexInParticleList[pId])));
-  }
-  boxSize[0] = lx;
-  boxSize[1] = ly;
-  setBoxSize(boxSize);
-  // assign positions
-  d_particlePos[0 * nDim] = lx * 0.65;
-  d_particlePos[0 * nDim + 1] = ly * y0;
-  d_particlePos[1 * nDim] = lx * 0.35;
-  d_particlePos[1 * nDim + 1] = ly * y1;
-  // initialize vertices
-  initVerticesOnParticles();
-  setInitialPositions();
-  initNeighbors(numVertices);
-  syncNeighborsToDevice();
-  // assign velocity
-  auto firstVertex = d_firstVertexInParticleId[1];
-  auto lastVertex = firstVertex + d_numVertexInParticleList[1];
-  switch (simControl.particleType) {
-    case simControlStruct::particleEnum::deformable:
-    for(long vId = firstVertex; vId < lastVertex; vId++) {
-      d_vel[vId * nDim] = vel1;
-    }
-    break;
-    case simControlStruct::particleEnum::rigid:
-    d_particleVel[1 * nDim] = vel1;
-    break;
-  }
-
-  setLengthScaleToOne();
-  if(cudaGetLastError()) cout << "DPM2D():: cudaGetLastError(): " << cudaGetLastError() << endl;
-}
-
-void DPM2D::firstUpdate(double timeStep) {
-  int s_nDim(nDim);
-  double s_dt(timeStep);
-  auto r = thrust::counting_iterator<long>(0);
-	double* pos = thrust::raw_pointer_cast(&d_pos[0]);
-	double* vel = thrust::raw_pointer_cast(&d_vel[0]);
-	const double* force = thrust::raw_pointer_cast(&d_force[0]);
-  auto firstUpdate = [=] __device__ (long vId) {
-    #pragma unroll (MAXDIM)
-		for (long dim = 0; dim < s_nDim; dim++) {
-      vel[vId * s_nDim + dim] += 0.5 * s_dt * force[vId * s_nDim + dim];
-      pos[vId * s_nDim + dim] += s_dt * vel[vId * s_nDim + dim];
-    }
-  };
-
-  auto firstVertex = d_firstVertexInParticleId[1];
-	auto lastVertex = firstVertex + d_numVertexInParticleList[1];
-  thrust::for_each(r + firstVertex, r + lastVertex, firstUpdate);
-  //thrust::for_each(r, r + numVertices, firstUpdate);
-}
-
-void DPM2D::secondUpdate(double timeStep) {
-  int s_nDim(nDim);
-  double s_dt(timeStep);
-  auto r = thrust::counting_iterator<long>(0);
-	double* vel = thrust::raw_pointer_cast(&d_vel[0]);
-	const double* force = thrust::raw_pointer_cast(&d_force[0]);
-
-  auto firstUpdate = [=] __device__ (long vId) {
-    #pragma unroll (MAXDIM)
-		for (long dim = 0; dim < s_nDim; dim++) {
-      vel[vId * s_nDim + dim] += 0.5 * s_dt * force[vId * s_nDim + dim];
-    }
-  };
-
-  auto firstVertex = d_firstVertexInParticleId[1];
-	auto lastVertex = firstVertex + d_numVertexInParticleList[1];
-  thrust::for_each(r + firstVertex, r + lastVertex, firstUpdate);
-  //thrust::for_each(r, r + numVertices, firstUpdate);
-}
-
-void DPM2D::testDeformableInteraction(double timeStep) {
-  firstUpdate(timeStep);
-  checkNeighbors();
-  calcForceEnergy();
-  secondUpdate(timeStep);
-}
-
-void DPM2D::firstRigidUpdate(double timeStep) {
-  int s_nDim(nDim);
-  double s_dt(timeStep);
-  auto r = thrust::counting_iterator<long>(0);
-  // translational variables
-  double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
-	double *pVel = thrust::raw_pointer_cast(&d_particleVel[0]);
-  const double* pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
-  // rotational variables
-  double* pAngle = thrust::raw_pointer_cast(&d_particleAngle[0]);
-	double* pAngvel = thrust::raw_pointer_cast(&d_particleAngvel[0]);
-	const double *pTorque = thrust::raw_pointer_cast(&d_particleTorque[0]);
-  auto firstRigidUpdate = [=] __device__ (long pId) {
-    #pragma unroll (MAXDIM)
-		for (long dim = 0; dim < s_nDim; dim++) {
-      pVel[pId * s_nDim + dim] += 0.5 * s_dt * pForce[pId * s_nDim + dim];
-      pPos[pId * s_nDim + dim] += s_dt * pVel[pId * s_nDim + dim];
-    }
-		pAngvel[pId] += 0.5 * s_dt * pTorque[pId];
-		pAngle[pId] += s_dt * pAngvel[pId];
-  };
-
-  thrust::for_each(r, r + numParticles, firstRigidUpdate);
-}
-
-void DPM2D::secondRigidUpdate(double timeStep) {
-  int s_nDim(nDim);
-  double s_dt(timeStep);
-  auto r = thrust::counting_iterator<long>(0);
-  // translational variables
-	double *pVel = thrust::raw_pointer_cast(&d_particleVel[0]);
-  const double* pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
-  // rotational variables
-	double* pAngvel = thrust::raw_pointer_cast(&d_particleAngvel[0]);
-	const double *pTorque = thrust::raw_pointer_cast(&d_particleTorque[0]);
-  auto secondRigidUpdate = [=] __device__ (long pId) {
-    #pragma unroll (MAXDIM)
-		for (long dim = 0; dim < s_nDim; dim++) {
-      pVel[pId * s_nDim + dim] += 0.5 * s_dt * pForce[pId * s_nDim + dim];
-    }
-		pAngvel[pId] += 0.5 * s_dt * pTorque[pId];
-  };
-
-  thrust::for_each(r, r + numParticles, secondRigidUpdate);
-}
-
-void DPM2D::testRigidInteraction(double timeStep) {
-  resetParticleLastPositions();
-  resetParticleLastAngles();
-  firstRigidUpdate(timeStep);
-  translateVertices();
-	rotateVertices();
-  checkNeighbors();
-  calcRigidForceEnergy();
-  secondRigidUpdate(timeStep);
-}
-
-void DPM2D::testInteraction(double timeStep) {
-  switch (simControl.particleType) {
-    case simControlStruct::particleEnum::deformable:
-    testDeformableInteraction(timeStep);
-    break;
-    case simControlStruct::particleEnum::rigid:
-    testRigidInteraction(timeStep);
-    break;
-  }
-}
-
-void DPM2D::printTwoParticles() {
-  cudaError err = cudaGetLastError();
-  if(err != cudaSuccess) cout << "DPM2D::calcForceEnergyGPU::cudaGetLastError(): " << err << endl;
-  thrust::host_vector<double> force(d_force.size(), 0.0);
-  thrust::host_vector<double> vel(d_force.size(), 0.0);
-  thrust::host_vector<double> pos(d_force.size(), 0.0);
-  force = d_force;
-  vel = d_vel;
-  pos = d_pos;
-  for (long pId = 0; pId < numParticles; pId++) {
-    cout << "Particle " << pId << endl;
-		auto firstVertex = d_firstVertexInParticleId[pId];
-		auto lastVertex = firstVertex + d_numVertexInParticleList[pId];
-    for(long vId = firstVertex; vId < lastVertex; vId++) {
-      cout << "vertex " << vId << " fx: " << force[vId * nDim] << " fy: " << force[vId * nDim + 1] << endl;
-      cout << "vx: " << vel[vId * nDim] << " vy: " << vel[vId * nDim + 1] << endl;
-      cout << "x: " << pos[vId * nDim] << " y: " << pos[vId * nDim + 1] << endl;
-    }
-  }
-}
-
 void DPM2D::calcForceEnergy() {
   switch (simControl.simulationType) {
     case simControlStruct::simulationEnum::gpu:
@@ -2015,6 +1992,69 @@ void DPM2D::calcShapeForceEnergy() {
   kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, theta, pos, force, energy);
 }
 
+void DPM2D::addSelfPropulsion() {
+  int s_nDim(nDim);
+  double s_driving(driving);
+  // use this to be able to set taup to 0
+  double amplitude = 0.;
+  if(taup != 0) {
+    amplitude = sqrt(2.0 * dt / taup);
+  }
+	if(nDim == 2) {
+    auto r = thrust::counting_iterator<long>(0);
+    thrust::counting_iterator<long> index_sequence_begin(lrand48());
+    double *pAngle = thrust::raw_pointer_cast(&d_particleAngle[0]);
+    thrust::transform(index_sequence_begin, index_sequence_begin + numParticles, d_randAngle.begin(), gaussNum(0.f,amplitude));
+    const double *randAngle = thrust::raw_pointer_cast(&d_randAngle[0]);
+
+    auto updateActiveNoise = [=] __device__ (long pId) {
+      pAngle[pId] += randAngle[pId];
+      pAngle[pId] = pAngle[pId] + PI;
+      pAngle[pId] = pAngle[pId] - 2.0 * PI * floor(pAngle[pId] / (2.0 * PI));
+      pAngle[pId] = pAngle[pId] - PI;
+    };
+
+    thrust::for_each(r, r + numParticles, updateActiveNoise);
+
+    auto s = thrust::counting_iterator<long>(0);
+    double *force = thrust::raw_pointer_cast(&d_force[0]);
+    const long *pIdList = thrust::raw_pointer_cast(&d_particleIdList[0]);
+
+    auto addActiveParticleForceToVertex = [=] __device__ (long vId) {
+      long pId = pIdList[vId];
+      #pragma unroll (MAXDIM)
+      for (long dim = 0; dim < s_nDim; dim++) {
+        force[vId * s_nDim + dim] += s_driving * ((1 - dim) * cos(pAngle[pId]) + dim * sin(pAngle[pId]));
+      }
+    };
+
+    thrust::for_each(s, s + numVertices, addActiveParticleForceToVertex);
+  } else {
+    cout << "DPM2D::addSelfPropulsion: self propulsion only implemented for 2D" << endl;
+  }
+}
+
+void DPM2D::updateRestLength() {
+  // update rest length
+  auto r = thrust::counting_iterator<long>(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
+  thrust::transform(index_sequence_begin, index_sequence_begin + numParticles, d_randAngle.begin(), gaussNum(0.f,1.f));
+  double s_dt(dt);
+  double s_l0Tau(l0Tau);
+  double s_l0Noise(sqrt(2. * l0Diff / dt));
+  double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
+  const double *l0Rest = thrust::raw_pointer_cast(&d_l0Rest[0]);
+  const double *randAngle = thrust::raw_pointer_cast(&d_randAngle[0]);
+  const long *pIdList = thrust::raw_pointer_cast(&d_particleIdList[0]);
+
+  auto updateRestLength = [=] __device__ (long vId) {
+    long pId = pIdList[vId];
+		l0[vId] += ((l0[vId] - l0Rest[vId]) / s_l0Tau + s_l0Noise * randAngle[pId]) * s_dt;
+  };
+
+  thrust::for_each(r, r + numVertices, updateRestLength);
+}
+
 void DPM2D::calcForceEnergyGPU() {
   calcShapeForceEnergy();
   const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
@@ -2037,6 +2077,16 @@ void DPM2D::calcForceEnergyGPU() {
     kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy);
     break;
   }
+  switch (simControl.particleType) {
+    case simControlStruct::particleEnum::active:
+    addSelfPropulsion();
+    break;
+    case simControlStruct::particleEnum::activeShape:
+    updateRestLength();
+    break;
+    default:
+    break;
+  }
   double *wForce = thrust::raw_pointer_cast(&d_wallForce[0]);
   switch (simControl.geometryType) {
     case simControlStruct::geometryEnum::fixedBox:
@@ -2051,6 +2101,110 @@ void DPM2D::calcForceEnergyGPU() {
     default:
     break;
   }
+}
+
+void DPM2D::calcVertexForceTorque() {
+  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
+  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
+  double *force = thrust::raw_pointer_cast(&d_force[0]);
+  double *torque = thrust::raw_pointer_cast(&d_torque[0]);
+	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
+  // torque here is used for angular acceleration
+  kernelCalcVertexForceTorque<<<dimGrid, dimBlock>>>(rad, pos, particlePos, force, torque, energy);
+}
+
+void DPM2D::calcVertexSmoothForceTorque() {
+  thrust::fill(d_force.begin(), d_force.end(), double(0));
+  thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
+  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
+  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
+  double *force = thrust::raw_pointer_cast(&d_force[0]);
+	double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
+  kernelCalcVertexSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy);
+}
+
+void DPM2D::calcRigidForceEnergy() {
+  calcParticlePositions();
+  switch (simControl.interactionType) {
+    case simControlStruct::interactionEnum::vertexVertex:
+    calcVertexForceTorque();
+    transferForceToParticles();
+    break;
+    case simControlStruct::interactionEnum::vertexSmooth:
+    calcVertexSmoothForceTorque();
+    transferSmoothForceToParticles();
+    break;
+    default:
+    break;
+  }
+}
+
+void DPM2D::calcTorqueAndMomentOfInertia() {
+  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
+	const double *force = thrust::raw_pointer_cast(&d_force[0]);
+  double *torque = thrust::raw_pointer_cast(&d_torque[0]);
+  double *momentOfInertia = thrust::raw_pointer_cast(&d_momentOfInertia[0]);
+  kernelCalcTorqueAndMomentOfInertia<<<dimGrid, dimBlock>>>(pos, particlePos, force, torque, momentOfInertia);
+}
+
+void DPM2D::transferForceToParticles() {
+  calcTorqueAndMomentOfInertia();
+  // vertex variables
+	const double *force = thrust::raw_pointer_cast(&d_force[0]);
+  const double *torque = thrust::raw_pointer_cast(&d_torque[0]);
+	const double *energy = thrust::raw_pointer_cast(&d_energy[0]);
+  const double *momentOfInertia = thrust::raw_pointer_cast(&d_momentOfInertia[0]);
+  // particle variables
+	double *pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
+  double *pTorque = thrust::raw_pointer_cast(&d_particleTorque[0]);
+  double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
+  // sum force and torque over vertices of particle
+  kernelCalcParticleRigidForceEnergy<<<dimGrid, dimBlock>>>(force, torque, energy, momentOfInertia, pForce, pTorque, pEnergy);
+}
+
+void DPM2D::transferSmoothForceToParticles() {
+  calcTorqueAndMomentOfInertia();
+  // vertex variables
+	const double *force = thrust::raw_pointer_cast(&d_force[0]);
+  const double *torque = thrust::raw_pointer_cast(&d_torque[0]);
+  const double *momentOfInertia = thrust::raw_pointer_cast(&d_momentOfInertia[0]);
+  // particle variables
+	double *pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
+  double *pTorque = thrust::raw_pointer_cast(&d_particleTorque[0]);
+  // sum force and torque over vertices of particle
+  kernelCalcParticleSmoothRigidForceEnergy<<<dimGrid, dimBlock>>>(force, torque, momentOfInertia, pForce, pTorque);
+}
+
+void DPM2D::calcStressTensor() {
+  calcPerParticleStressTensor();
+  thrust::fill(d_stress.begin(), d_stress.end(), double(0));
+  const double *perPStress = thrust::raw_pointer_cast(&d_perParticleStress[0]);
+	double *stress = thrust::raw_pointer_cast(&d_stress[0]);
+  kernelCalcStressTensor<<<partDimGrid, dimBlock>>>(perPStress, stress);
+}
+
+void DPM2D::calcPerParticleStressTensor() {
+  d_perParticleStress.resize(numParticles * nDim * nDim);
+  thrust::fill(d_perParticleStress.begin(), d_perParticleStress.end(), double(0));
+  thrust::fill(d_stress.begin(), d_stress.end(), double(0));
+  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
+	const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+	const double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
+	double *perPStress = thrust::raw_pointer_cast(&d_perParticleStress[0]);
+  kernelCalcPerParticleStressTensor<<<partDimGrid, dimBlock>>>(rad, pos, pPos, perPStress);
+}
+
+void DPM2D::calcNeighborForces() {
+  thrust::host_vector<double> neighborForce;
+  neighborForce.resize(numVertices * neighborListSize * nDim);
+  thrust::fill(neighborForce.begin(), neighborForce.end(), 0);
+	const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
+  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+  double *neighforce = thrust::raw_pointer_cast(&neighborForce[0]);
+  kernelCalcNeighborForces<<<dimGrid, dimBlock>>>(pos, rad, neighforce);
 }
 
 thrust::host_vector<double> DPM2D::getInteractionForces() {
@@ -2096,6 +2250,8 @@ thrust::host_vector<double> DPM2D::getInteractionForcesGPU() {
   return interactionFromDevice;
 }
 
+
+// Serial and parallel (OpenMP) CPU versions of force and energy calculations for testing and debugging
 void DPM2D::calcForceEnergyCPU() {
   calcShapeForceEnergy();
   switch (simControl.interactionType) {
@@ -3070,168 +3226,238 @@ void DPM2D::calcCellListSmoothInteraction() {
   fillLinkedList();
 }
 
-void DPM2D::calcVertexForceTorque() {
-  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
-  double *force = thrust::raw_pointer_cast(&d_force[0]);
-  double *torque = thrust::raw_pointer_cast(&d_torque[0]);
-	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
-  // torque here is used for angular acceleration
-  kernelCalcVertexForceTorque<<<dimGrid, dimBlock>>>(rad, pos, particlePos, force, torque, energy);
+// Test functions for force and energy calculations
+void DPM2D::setTwoParticleTest(double lx, double ly, double y0, double y1, double vel1) {
+  setMonoSizeDistribution();
+  if(cudaGetLastError()) cout << "DPM2D():: cudaGetLastError(): " << cudaGetLastError() << endl;
+  thrust::host_vector<double> boxSize(nDim);
+  // set particle radii
+  for (long pId = 0; pId < numParticles; pId++) {
+    d_particleRad[pId] = sqrt((2. * d_a0[pId]) / (d_numVertexInParticleList[pId] * sin(2. * PI / d_numVertexInParticleList[pId])));
+  }
+  boxSize[0] = lx;
+  boxSize[1] = ly;
+  setBoxSize(boxSize);
+  // assign positions
+  d_particlePos[0 * nDim] = lx * 0.65;
+  d_particlePos[0 * nDim + 1] = ly * y0;
+  d_particlePos[1 * nDim] = lx * 0.35;
+  d_particlePos[1 * nDim + 1] = ly * y1;
+  // initialize vertices
+  initVerticesOnParticles();
+  setInitialPositions();
+  initNeighbors(numVertices);
+  syncNeighborsToDevice();
+  // assign velocity
+  auto firstVertex = d_firstVertexInParticleId[1];
+  auto lastVertex = firstVertex + d_numVertexInParticleList[1];
+  switch (simControl.shapeType) {
+    case simControlStruct::shapeEnum::deformable:
+    for(long vId = firstVertex; vId < lastVertex; vId++) {
+      d_vel[vId * nDim] = vel1;
+    }
+    break;
+    case simControlStruct::shapeEnum::rigid:
+    d_particleVel[1 * nDim] = vel1;
+    break;
+  }
+
+  setLengthScaleToOne();
+  if(cudaGetLastError()) cout << "DPM2D():: cudaGetLastError(): " << cudaGetLastError() << endl;
 }
 
-void DPM2D::calcVertexSmoothForceTorque() {
-  thrust::fill(d_force.begin(), d_force.end(), double(0));
-  thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
-  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
-  double *force = thrust::raw_pointer_cast(&d_force[0]);
-	double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
-  kernelCalcVertexSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy);
+void DPM2D::firstUpdate(double timeStep) {
+  int s_nDim(nDim);
+  double s_dt(timeStep);
+  auto r = thrust::counting_iterator<long>(0);
+	double* pos = thrust::raw_pointer_cast(&d_pos[0]);
+	double* vel = thrust::raw_pointer_cast(&d_vel[0]);
+	const double* force = thrust::raw_pointer_cast(&d_force[0]);
+  auto firstUpdate = [=] __device__ (long vId) {
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      vel[vId * s_nDim + dim] += 0.5 * s_dt * force[vId * s_nDim + dim];
+      pos[vId * s_nDim + dim] += s_dt * vel[vId * s_nDim + dim];
+    }
+  };
+
+  auto firstVertex = d_firstVertexInParticleId[1];
+	auto lastVertex = firstVertex + d_numVertexInParticleList[1];
+  thrust::for_each(r + firstVertex, r + lastVertex, firstUpdate);
+  //thrust::for_each(r, r + numVertices, firstUpdate);
 }
 
-void DPM2D::calcRigidForceEnergy() {
-  calcParticlePositions();
-  switch (simControl.interactionType) {
-    case simControlStruct::interactionEnum::vertexVertex:
-    calcVertexForceTorque();
-    transferForceToParticles();
+void DPM2D::secondUpdate(double timeStep) {
+  int s_nDim(nDim);
+  double s_dt(timeStep);
+  auto r = thrust::counting_iterator<long>(0);
+	double* vel = thrust::raw_pointer_cast(&d_vel[0]);
+	const double* force = thrust::raw_pointer_cast(&d_force[0]);
+
+  auto firstUpdate = [=] __device__ (long vId) {
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      vel[vId * s_nDim + dim] += 0.5 * s_dt * force[vId * s_nDim + dim];
+    }
+  };
+
+  auto firstVertex = d_firstVertexInParticleId[1];
+	auto lastVertex = firstVertex + d_numVertexInParticleList[1];
+  thrust::for_each(r + firstVertex, r + lastVertex, firstUpdate);
+  //thrust::for_each(r, r + numVertices, firstUpdate);
+}
+
+void DPM2D::testDeformableInteraction(double timeStep) {
+  firstUpdate(timeStep);
+  checkNeighbors();
+  calcForceEnergy();
+  secondUpdate(timeStep);
+}
+
+void DPM2D::firstRigidUpdate(double timeStep) {
+  int s_nDim(nDim);
+  double s_dt(timeStep);
+  auto r = thrust::counting_iterator<long>(0);
+  // translational variables
+  double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
+	double *pVel = thrust::raw_pointer_cast(&d_particleVel[0]);
+  const double* pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
+  // rotational variables
+  double* pAngle = thrust::raw_pointer_cast(&d_particleAngle[0]);
+	double* pAngvel = thrust::raw_pointer_cast(&d_particleAngvel[0]);
+	const double *pTorque = thrust::raw_pointer_cast(&d_particleTorque[0]);
+  auto firstRigidUpdate = [=] __device__ (long pId) {
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      pVel[pId * s_nDim + dim] += 0.5 * s_dt * pForce[pId * s_nDim + dim];
+      pPos[pId * s_nDim + dim] += s_dt * pVel[pId * s_nDim + dim];
+    }
+		pAngvel[pId] += 0.5 * s_dt * pTorque[pId];
+		pAngle[pId] += s_dt * pAngvel[pId];
+  };
+
+  thrust::for_each(r, r + numParticles, firstRigidUpdate);
+}
+
+void DPM2D::secondRigidUpdate(double timeStep) {
+  int s_nDim(nDim);
+  double s_dt(timeStep);
+  auto r = thrust::counting_iterator<long>(0);
+  // translational variables
+	double *pVel = thrust::raw_pointer_cast(&d_particleVel[0]);
+  const double* pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
+  // rotational variables
+	double* pAngvel = thrust::raw_pointer_cast(&d_particleAngvel[0]);
+	const double *pTorque = thrust::raw_pointer_cast(&d_particleTorque[0]);
+  auto secondRigidUpdate = [=] __device__ (long pId) {
+    #pragma unroll (MAXDIM)
+		for (long dim = 0; dim < s_nDim; dim++) {
+      pVel[pId * s_nDim + dim] += 0.5 * s_dt * pForce[pId * s_nDim + dim];
+    }
+		pAngvel[pId] += 0.5 * s_dt * pTorque[pId];
+  };
+
+  thrust::for_each(r, r + numParticles, secondRigidUpdate);
+}
+
+void DPM2D::testRigidInteraction(double timeStep) {
+  resetParticleLastPositions();
+  resetParticleLastAngles();
+  firstRigidUpdate(timeStep);
+  translateVertices();
+	rotateVertices();
+  checkNeighbors();
+  calcRigidForceEnergy();
+  secondRigidUpdate(timeStep);
+}
+
+void DPM2D::testInteraction(double timeStep) {
+  switch (simControl.shapeType) {
+    case simControlStruct::shapeEnum::deformable:
+    testDeformableInteraction(timeStep);
     break;
-    case simControlStruct::interactionEnum::vertexSmooth:
-    calcVertexSmoothForceTorque();
-    transferSmoothForceToParticles();
-    break;
-    default:
+    case simControlStruct::shapeEnum::rigid:
+    testRigidInteraction(timeStep);
     break;
   }
 }
 
-void DPM2D::calcTorqueAndMomentOfInertia() {
-  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-  const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
-	const double *force = thrust::raw_pointer_cast(&d_force[0]);
-  double *torque = thrust::raw_pointer_cast(&d_torque[0]);
-  double *momentOfInertia = thrust::raw_pointer_cast(&d_momentOfInertia[0]);
-  kernelCalcTorqueAndMomentOfInertia<<<dimGrid, dimBlock>>>(pos, particlePos, force, torque, momentOfInertia);
+void DPM2D::printTwoParticles() {
+  cudaError err = cudaGetLastError();
+  if(err != cudaSuccess) cout << "DPM2D::calcForceEnergyGPU::cudaGetLastError(): " << err << endl;
+  thrust::host_vector<double> force(d_force.size(), 0.0);
+  thrust::host_vector<double> vel(d_force.size(), 0.0);
+  thrust::host_vector<double> pos(d_force.size(), 0.0);
+  force = d_force;
+  vel = d_vel;
+  pos = d_pos;
+  for (long pId = 0; pId < numParticles; pId++) {
+    cout << "Particle " << pId << endl;
+		auto firstVertex = d_firstVertexInParticleId[pId];
+		auto lastVertex = firstVertex + d_numVertexInParticleList[pId];
+    for(long vId = firstVertex; vId < lastVertex; vId++) {
+      cout << "vertex " << vId << " fx: " << force[vId * nDim] << " fy: " << force[vId * nDim + 1] << endl;
+      cout << "vx: " << vel[vId * nDim] << " vy: " << vel[vId * nDim + 1] << endl;
+      cout << "x: " << pos[vId * nDim] << " y: " << pos[vId * nDim + 1] << endl;
+    }
+  }
 }
 
-void DPM2D::transferForceToParticles() {
-  calcTorqueAndMomentOfInertia();
-  // vertex variables
-	const double *force = thrust::raw_pointer_cast(&d_force[0]);
-  const double *torque = thrust::raw_pointer_cast(&d_torque[0]);
-	const double *energy = thrust::raw_pointer_cast(&d_energy[0]);
-  const double *momentOfInertia = thrust::raw_pointer_cast(&d_momentOfInertia[0]);
-  // particle variables
-	double *pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
-  double *pTorque = thrust::raw_pointer_cast(&d_particleTorque[0]);
-  double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
-  // sum force and torque over vertices of particle
-  kernelCalcParticleRigidForceEnergy<<<dimGrid, dimBlock>>>(force, torque, energy, momentOfInertia, pForce, pTorque, pEnergy);
-}
+//************************* cell contacts (computed from vertex neighbors) ***************************//
+void DPM2D::calcContacts() {
+  thrust::fill(d_maxContactList.begin(), d_maxContactList.end(), 0);
+	thrust::fill(d_contactList.begin(), d_contactList.end(), -1L);
+  syncContactsToDevice();
 
-void DPM2D::transferSmoothForceToParticles() {
-  calcTorqueAndMomentOfInertia();
-  // vertex variables
-	const double *force = thrust::raw_pointer_cast(&d_force[0]);
-  const double *torque = thrust::raw_pointer_cast(&d_torque[0]);
-  const double *momentOfInertia = thrust::raw_pointer_cast(&d_momentOfInertia[0]);
-  // particle variables
-	double *pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
-  double *pTorque = thrust::raw_pointer_cast(&d_particleTorque[0]);
-  // sum force and torque over vertices of particle
-  kernelCalcParticleSmoothRigidForceEnergy<<<dimGrid, dimBlock>>>(force, torque, momentOfInertia, pForce, pTorque);
-}
+  kernelCalcContacts<<<dimGrid, dimBlock>>>();
+  // compute maximum number of neighbors per particle
+  maxContacts = thrust::reduce(d_maxContactList.begin(), d_maxContactList.end(), -1L, thrust::maximum<long>());
+  //cout << "DPM2D::calcContacts: maxContacts: " << maxContacts << endl;
 
-void DPM2D::calcStressTensor() {
-  calcPerParticleStressTensor();
-  thrust::fill(d_stress.begin(), d_stress.end(), double(0));
-  const double *perPStress = thrust::raw_pointer_cast(&d_perParticleStress[0]);
-	double *stress = thrust::raw_pointer_cast(&d_stress[0]);
-  kernelCalcStressTensor<<<partDimGrid, dimBlock>>>(perPStress, stress);
-}
-
-void DPM2D::calcPerParticleStressTensor() {
-  thrust::fill(d_stress.begin(), d_stress.end(), double(0));
-  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-	const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-	const double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
-	double *perPStress = thrust::raw_pointer_cast(&d_perParticleStress[0]);
-  kernelCalcPerParticleStressTensor<<<partDimGrid, dimBlock>>>(rad, pos, pPos, perPStress);
-}
-
-void DPM2D::calcNeighborForces() {
-  thrust::host_vector<double> neighborForce;
-  neighborForce.resize(numVertices * neighborListSize * nDim);
-  thrust::fill(neighborForce.begin(), neighborForce.end(), 0);
-	const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-  double *neighforce = thrust::raw_pointer_cast(&neighborForce[0]);
-  kernelCalcNeighborForces<<<dimGrid, dimBlock>>>(pos, rad, neighforce);
-}
-
-//************************* contacts and neighbors ***************************//
-void DPM2D::calcParticleNeighbors() {
-  long largestNeighbor = 8*nDim; // Guess
-	do {
-		//Make a contactList that is the right size
-		neighborLimit = largestNeighbor;
-		d_partNeighborList = thrust::device_vector<long>(numParticles * neighborLimit);
-		//Prefill the contactList with -1
-		thrust::fill(d_partNeighborList.begin(), d_partNeighborList.end(), -1L);
-		thrust::fill(d_numPartNeighbors.begin(), d_numPartNeighbors.end(), -1L);
-		//Create device_pointers from thrust arrays
-		double* pos = thrust::raw_pointer_cast(&d_pos[0]);
-		double* rad = thrust::raw_pointer_cast(&d_rad[0]);
-		long* pNeighborList = thrust::raw_pointer_cast(&d_partNeighborList[0]);
-		long* numPNeighbors = thrust::raw_pointer_cast(&d_numPartNeighbors[0]);
-		kernelCalcParticleNeighbors<<<dimGrid, dimBlock>>>(pos, rad, neighborLimit, pNeighborList, numPNeighbors);
-		//Calculate the maximum number of contacts
-		largestNeighbor = thrust::reduce(d_numPartNeighbors.begin(), d_numPartNeighbors.end(), -1L, thrust::maximum<long>());
-    //cout << "DPM2D::calcParticleNeighbors: largestNeighbor = " << largestNeighbor << endl;
-	} while(neighborLimit < largestNeighbor); // If the guess was not good, do it again
-}
-
-void DPM2D::calcContacts(double gapSize) {
-  long largestContact = 8*nDim; // Guess
-	do {
-		//Make a contactList that is the right size
-		contactLimit = largestContact;
-		d_contactList = thrust::device_vector<long>(numParticles * contactLimit);
-		//Prefill the contactList with -1
+  // if the neighbors don't fit, resize the neighbor list
+  if ( maxContacts > contactListSize ) {
+		contactListSize = pow(2, ceil(std::log2(maxContacts)));
+    //cout << "DPM2D::calcContacts: contactListSize: " << contactListSize << endl;
+		// now create the actual storage and then put the neighbors in it
+		d_contactList.resize(numParticles * contactListSize);
+		// pre-fill the neighborList with -1
 		thrust::fill(d_contactList.begin(), d_contactList.end(), -1L);
-		thrust::fill(d_numContacts.begin(), d_numContacts.end(), -1L);
+		syncContactsToDevice();
+		kernelCalcContacts<<<dimGrid, dimBlock>>>();
+	}
+}
+
+void DPM2D::calcGeometricContacts() {
+  double gapSize = 1.0;
+  long largestContact = 4*nDim; // Guess
+	do {
+		//Make a contactList that is the right size
+		contactListSize = largestContact;
+		d_contactList = thrust::device_vector<long>(numParticles * contactListSize);
+		//Prefill the contactList with -1
+    thrust::fill(d_maxContactList.begin(), d_maxContactList.end(), 0);
+		thrust::fill(d_contactList.begin(), d_contactList.end(), -1L);
+    syncContactsToDevice();
+
 		//Create device_pointers from thrust arrays
 		const double* pos = thrust::raw_pointer_cast(&d_pos[0]);
 		const double* rad = thrust::raw_pointer_cast(&d_rad[0]);
-		long* contactList = thrust::raw_pointer_cast(&d_contactList[0]);
-		long* numContacts = thrust::raw_pointer_cast(&d_numContacts[0]);
-		kernelCalcContacts<<<dimGrid, dimBlock>>>(pos, rad, gapSize, contactLimit, contactList, numContacts);
+		kernelCalcGeometricContacts<<<dimGrid, dimBlock>>>(pos, rad, gapSize);
 		//Calculate the maximum number of contacts
-		largestContact = thrust::reduce(d_numContacts.begin(), d_numContacts.end(), -1L, thrust::maximum<long>());
-    //cout << "DPM2D::calcContacts: largestContact = " << largestContact << endl;
-	} while(contactLimit < largestContact); // If the guess was not good, do it again
+		largestContact = thrust::reduce(d_maxContactList.begin(), d_maxContactList.end(), -1L, thrust::maximum<long>());
+    cout << "DPM2D::calcGeometricContacts: largestContact = " << largestContact << " contactListSize: " << contactListSize << endl;
+	} while(contactListSize < largestContact); // If the guess was not good, do it again
 }
 
-//Return normalized contact vectors between every pair of particles in contact
-thrust::host_vector<long> DPM2D::getContactVectors(double gapSize) {
-	//Calculate the set of contacts
-	calcContacts(gapSize);
-	//Calculate the maximum number of contacts
-	maxContacts = thrust::reduce(d_numContacts.begin(), d_numContacts.end(), -1L, thrust::maximum<long>());
-	//Create the array to hold the contactVectors
-	d_contactVectorList.resize(numParticles * nDim * maxContacts);
-	thrust::fill(d_contactVectorList.begin(), d_contactVectorList.end(), double(0));
-	double* pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
+void DPM2D::syncContactsToDevice() {
+	//Copy the pointers and information about contacts to the gpu
+	cudaMemcpyToSymbol(d_contactListSize, &contactListSize, sizeof(contactListSize));
+
+	long* maxContactList = thrust::raw_pointer_cast(&d_maxContactList[0]);
+	cudaMemcpyToSymbol(d_maxContactListPtr, &maxContactList, sizeof(maxContactList));
+
 	long* contactList = thrust::raw_pointer_cast(&d_contactList[0]);
-	double* contactVectorList = thrust::raw_pointer_cast(&d_contactVectorList[0]);
-	kernelCalcContactVectorList<<<dimGrid, dimBlock>>>(pPos, contactList, d_contactList.size()/numParticles, maxContacts, contactVectorList);
-  // convert to host and return
-  thrust::host_vector<long> contactVectorListFromDevice;
-  contactVectorListFromDevice = d_contactVectorList;
-  return contactVectorListFromDevice;
+	cudaMemcpyToSymbol(d_contactListPtr, &contactList, sizeof(contactList));
 }
 
 //*************************** vertex neighbors *******************************//
@@ -3257,11 +3483,9 @@ void DPM2D::calcNeighborList(double cutDistance) {
 
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
 	const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-
   kernelCalcNeighborList<<<dimGrid, dimBlock>>>(pos, rad, cutDistance);
   // compute maximum number of neighbors per particle
   maxNeighbors = thrust::reduce(d_maxNeighborList.begin(), d_maxNeighborList.end(), -1L, thrust::maximum<long>());
-  syncNeighborsToDevice();
   //cout << "\n DPM2D::calcNeighborList: maxNeighbors: " << maxNeighbors << endl;
 
   // if the neighbors don't fit, resize the neighbor list
@@ -3285,13 +3509,49 @@ void DPM2D::calcNeighborList(double cutDistance) {
 void DPM2D::syncNeighborsToDevice() {
 	//Copy the pointers and information about neighbors to the gpu
 	cudaMemcpyToSymbol(d_neighborListSize, &neighborListSize, sizeof(neighborListSize));
-	cudaMemcpyToSymbol(d_maxNeighbors, &maxNeighbors, sizeof(maxNeighbors));
 
 	long* maxNeighborList = thrust::raw_pointer_cast(&d_maxNeighborList[0]);
 	cudaMemcpyToSymbol(d_maxNeighborListPtr, &maxNeighborList, sizeof(maxNeighborList));
 
 	long* neighborList = thrust::raw_pointer_cast(&d_neighborList[0]);
 	cudaMemcpyToSymbol(d_neighborListPtr, &neighborList, sizeof(neighborList));
+}
+
+//************************* particle neighbors *******************************//
+void DPM2D::calcParticleNeighborList(double cutDistance) {
+  thrust::fill(d_partMaxNeighborList.begin(), d_partMaxNeighborList.end(), 0);
+	thrust::fill(d_partNeighborList.begin(), d_partNeighborList.end(), -1L);
+  syncParticleNeighborsToDevice();
+
+  const double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
+	const double *pRad = thrust::raw_pointer_cast(&d_particleRad[0]);
+  kernelCalcParticleNeighborList<<<dimGrid, dimBlock>>>(pPos, pRad, cutDistance);
+  // compute maximum number of neighbors per particle
+  partMaxNeighbors = thrust::reduce(d_partMaxNeighborList.begin(), d_partMaxNeighborList.end(), -1L, thrust::maximum<long>());
+  //cout << "DPM2D::calcParticleNeighborList: maxNeighbors: " << partMaxNeighbors << endl;
+
+  // if the neighbors don't fit, resize the neighbor list
+  if ( partMaxNeighbors > partNeighborListSize ) {
+		partNeighborListSize = pow(2, ceil(std::log2(partMaxNeighbors)));
+    //cout << "DPM2D::calcParticleNeighborList: neighborListSize: " << neighborListSize << endl;
+		// now create the actual storage and then put the neighbors in it
+		d_partNeighborList.resize(numParticles * partNeighborListSize);
+		// pre-fill the neighborList with -1
+		thrust::fill(d_partNeighborList.begin(), d_partNeighborList.end(), -1L);
+		syncParticleNeighborsToDevice();
+		kernelCalcParticleNeighborList<<<dimGrid, dimBlock>>>(pPos, pRad, cutDistance);
+	}
+}
+
+void DPM2D::syncParticleNeighborsToDevice() {
+	//Copy the pointers and information about neighbors to the gpu
+	cudaMemcpyToSymbol(d_partNeighborListSize, &partNeighborListSize, sizeof(partNeighborListSize));
+
+	long* partMaxNeighborList = thrust::raw_pointer_cast(&d_partMaxNeighborList[0]);
+	cudaMemcpyToSymbol(d_partMaxNeighborListPtr, &partMaxNeighborList, sizeof(partMaxNeighborList));
+
+	long* partNeighborList = thrust::raw_pointer_cast(&d_partNeighborList[0]);
+	cudaMemcpyToSymbol(d_partNeighborListPtr, &partNeighborList, sizeof(partNeighborList));
 }
 
 //*************************** vertex cell list *****************************//
@@ -3316,45 +3576,6 @@ void DPM2D::fillLinkedList() {
     h_cellIndexList[vertexId * nDim] = cIdx;
     h_cellIndexList[vertexId * nDim + 1] = cIdy;
   }
-}
-
-//************************* particle neighbors *******************************//
-void DPM2D::calcParticleNeighborList(double cutDistance) {
-  thrust::fill(d_partMaxNeighborList.begin(), d_partMaxNeighborList.end(), 0);
-	thrust::fill(d_partNeighborList.begin(), d_partNeighborList.end(), -1L);
-  syncParticleNeighborsToDevice();
-  const double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
-	const double *pRad = thrust::raw_pointer_cast(&d_particleRad[0]);
-
-  kernelCalcParticleNeighborList<<<dimGrid, dimBlock>>>(pPos, pRad, cutDistance);
-  // compute maximum number of neighbors per particle
-  partMaxNeighbors = thrust::reduce(d_partMaxNeighborList.begin(), d_partMaxNeighborList.end(), -1L, thrust::maximum<long>());
-  syncParticleNeighborsToDevice();
-  //cout << "DPM2D::calcParticleNeighborList: maxNeighbors: " << partMaxNeighbors << endl;
-
-  // if the neighbors don't fit, resize the neighbor list
-  if ( partMaxNeighbors > partNeighborListSize ) {
-		partNeighborListSize = pow(2, ceil(std::log2(partMaxNeighbors)));
-    //cout << "DPM2D::calcParticleNeighborList: neighborListSize: " << neighborListSize << endl;
-		// now create the actual storage and then put the neighbors in it
-		d_partNeighborList.resize(numParticles * partNeighborListSize);
-		// pre-fill the neighborList with -1
-		thrust::fill(d_partNeighborList.begin(), d_partNeighborList.end(), -1L);
-		syncParticleNeighborsToDevice();
-		kernelCalcParticleNeighborList<<<dimGrid, dimBlock>>>(pPos, pRad, cutDistance);
-	}
-}
-
-void DPM2D::syncParticleNeighborsToDevice() {
-	//Copy the pointers and information about neighbors to the gpu
-	cudaMemcpyToSymbol(d_partNeighborListSize, &partNeighborListSize, sizeof(partNeighborListSize));
-	cudaMemcpyToSymbol(d_partMaxNeighbors, &partMaxNeighbors, sizeof(partMaxNeighbors));
-
-	long* partMaxNeighborList = thrust::raw_pointer_cast(&d_partMaxNeighborList[0]);
-	cudaMemcpyToSymbol(d_partMaxNeighborListPtr, &partMaxNeighborList, sizeof(partMaxNeighborList));
-
-	long* partNeighborList = thrust::raw_pointer_cast(&d_partNeighborList[0]);
-	cudaMemcpyToSymbol(d_partNeighborListPtr, &partNeighborList, sizeof(partNeighborList));
 }
 
 //************************* particle functions *******************************//
@@ -3431,44 +3652,8 @@ double DPM2D::getRigidMaxUnbalancedForce() {
 	return std::max(particleMaxUnbalancedForce, particleMaxUnbalancedTorque);
 }
 
-double DPM2D::getParticlePotentialEnergy() {
-  return thrust::reduce(d_particleEnergy.begin(), d_particleEnergy.end(), double(0), thrust::plus<double>());
-}
-
-double DPM2D::getParticleKineticEnergy() {
-  thrust::device_vector<double> velSquared(d_particleVel.size());
-  // compute squared velocities
-  thrust::transform(d_particleVel.begin(), d_particleVel.end(), velSquared.begin(), square());
-  // sum squares
-  return 0.5 * thrust::reduce(velSquared.begin(), velSquared.end(), double(0), thrust::plus<double>());
-}
-
-double DPM2D::getRigidKineticEnergy() {
-  double ekin = getParticleKineticEnergy();
-  thrust::device_vector<double> angMomentum(d_particleAngvel.size());
-  // multiple angular velocity by distance from axis of rotation
-  thrust::transform(d_particleAngvel.begin(), d_particleAngvel.end(), d_particleRad.begin(), angMomentum.begin(), thrust::multiplies<double>());
-  // compute squared momentum
-  thrust::device_vector<double> rotEnergy(d_particleAngvel.size());
-  thrust::transform(angMomentum.begin(), angMomentum.end(), rotEnergy.begin(), square());
-  ekin += 0.5 * thrust::reduce(rotEnergy.begin(), rotEnergy.end(), double(0), thrust::plus<double>());
-  return ekin;
-}
-
-double DPM2D::getParticleTemperature() {
-  double ekin = getParticleKineticEnergy();
-  return 2 * ekin / (numParticles * nDim);
-}
-
 double DPM2D::getParticleDrift() {
   return thrust::reduce(d_particlePos.begin(), d_particlePos.end(), double(0), thrust::plus<double>()) / (numParticles * nDim);
-}
-
-thrust::host_vector<long> DPM2D::getParticleNeighbors() {
-  calcParticleNeighbors();
-  thrust::host_vector<long> partNeighborListFromDevice;
-  partNeighborListFromDevice = d_partNeighborList;
-  return partNeighborListFromDevice;
 }
 
 //********************************* minimizers *******************************//
@@ -3526,95 +3711,58 @@ void DPM2D::rigidFIRELoop() {
 
 //******************* integrators for deformable particles *******************//
 void DPM2D::initLangevin(double Temp, double gamma, bool readState) {
-  this->sim_ = new Langevin(this, SimConfig(Temp, 0, 0));
-  this->sim_->gamma = gamma;
-  this->sim_->noiseVar = sqrt(Temp);
-  this->sim_->lcoeff1 = exp(-gamma * dt);
-  this->sim_->lcoeff2 = sqrt(1 - exp(-2*gamma*dt));
-  this->sim_->d_thermalVel.resize(d_vel.size());
-  thrust::fill(this->sim_->d_thermalVel.begin(), this->sim_->d_thermalVel.end(), double(0));
-  resetLastPositions();
-  d_particleInitPos.resize(numParticles * nDim);
-  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlePositions();
-  d_particleInitPos = d_particlePos;
-  if(readState == false) {
-    //this->sim_->injectKineticEnergy();
-    cout << "DPM2D::initLangevin:: current temperature: " << setprecision(12) << getTemperature() << endl;
-  } else {
-    cout << "DPM2D::initLangevin:: reading velocities" << endl;
+  switch (simControl.noiseType) {
+    case simControlStruct::noiseEnum::langevin:
+    this->sim_ = new Langevin(this, SimConfig(Temp));
+    this->sim_->gamma = gamma;
+    this->sim_->noise = sqrt(2. * Temp * gamma / dt);
+    this->sim_->d_rand.resize(numParticles * nDim);
+    thrust::fill(this->sim_->d_rand.begin(), this->sim_->d_rand.end(), double(0));
+    cout << "SP2D::initLangevin:: Langevin integrator,";
+    break;
+    case simControlStruct::noiseEnum::baoab:
+    this->sim_ = new BAOAB(this, SimConfig(Temp));
+    this->sim_->gamma = exp(-gamma * dt);
+    this->sim_->noise = sqrt(1 - exp(-2 * gamma * dt)) * sqrt(Temp);
+    this->sim_->d_rand.resize(numParticles * nDim);
+    thrust::fill(this->sim_->d_rand.begin(), this->sim_->d_rand.end(), double(0));
+    cout << "SP2D::initLangevin:: BAOAB integrator,";
+    break;
+    case simControlStruct::noiseEnum::brownian:
+    this->sim_ = new Brownian(this, SimConfig(Temp));
+    this->sim_->gamma = gamma;
+    this->sim_->noise = sqrt(2. * Temp * gamma / dt);
+    this->sim_->d_rand.resize(numParticles * nDim);
+    thrust::fill(this->sim_->d_rand.begin(), this->sim_->d_rand.end(), double(0));
+    cout << "SP2D::initLangevin:: Brownian integrator, gamma: " << this->sim_->gamma << " noise: " << this->sim_->noise << ",";
+    break;
+    case simControlStruct::noiseEnum::drivenBrownian:
+    this->sim_ = new DrivenBrownian(this, SimConfig(Temp));
+    this->sim_->gamma = gamma;
+    this->sim_->noise = sqrt(2. * Temp * gamma / dt);
+    cout << "SP2D::initLangevin:: Driven Brownian integrator,";
+    break;
   }
+  resetLastPositions();
+  setInitialPositions();
+  setInitialParticlePositions();
+  if(readState == false) {
+    this->sim_->injectKineticEnergy();
+  }
+  cout << " current temperature: " << setprecision(12) << getTemperature() << endl;
 }
 
 void DPM2D::langevinLoop() {
   this->sim_->integrate();
 }
 
-void DPM2D::initLangevin2(double Temp, double gamma, bool readState) {
-  this->sim_ = new Langevin2(this, SimConfig(Temp, 0, 0));
-  this->sim_->gamma = gamma;
-  this->sim_->noiseVar = sqrt(2. * Temp * gamma);
-  this->sim_->lcoeff1 = 0.25 * dt * sqrt(dt) * gamma * this->sim_->noiseVar;
-  this->sim_->lcoeff2 = 0.5 * sqrt(dt) * this->sim_->noiseVar;
-  this->sim_->lcoeff3 = (0.5 / sqrt(3)) * sqrt(dt) * dt * this->sim_->noiseVar;
-  this->sim_->d_rand.resize(d_vel.size());
-  this->sim_->d_rando.resize(d_vel.size());
-  this->sim_->d_thermalVel.resize(d_vel.size());
-  thrust::fill(this->sim_->d_thermalVel.begin(), this->sim_->d_thermalVel.end(), double(0));
-  resetLastPositions();
-  d_particleInitPos.resize(numParticles * nDim);
-  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlePositions();
-  d_particleInitPos = d_particlePos;
-  if(readState == false) {
-    //this->sim_->injectKineticEnergy();
-    cout << "DPM2D::initLangevin2:: current temperature: " << setprecision(12) << getTemperature() << endl;
-  } else {
-    cout << "DPM2D::initLangevin2:: reading velocities" << endl;
-  }
-}
-
-void DPM2D::langevin2Loop() {
-  this->sim_->integrate();
-}
-
-void DPM2D::initActiveLangevin(double Temp, double Dr, double driving, double gamma, bool readState) {
-  this->sim_ = new ActiveLangevin(this, SimConfig(Temp, Dr, driving));
-  this->sim_->gamma = gamma;
-  this->sim_->noiseVar = sqrt(2. * Temp * gamma);
-  this->sim_->lcoeff1 = 0.25 * dt * sqrt(dt) * gamma * this->sim_->noiseVar;
-  this->sim_->lcoeff2 = 0.5 * sqrt(dt) * this->sim_->noiseVar;
-  this->sim_->lcoeff3 = (0.5 / sqrt(3)) * sqrt(dt) * dt * this->sim_->noiseVar;
-  this->sim_->d_rand.resize(numParticles * nDim);
-  this->sim_->d_rando.resize(numParticles * nDim);
-  this->sim_->d_pActiveAngle.resize(numParticles);
-  this->sim_->d_thermalVel.resize(d_particleVel.size());
-  thrust::fill(this->sim_->d_thermalVel.begin(), this->sim_->d_thermalVel.end(), double(0));
-  resetLastPositions();
-  d_particleInitPos.resize(numParticles * nDim);
-  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlePositions();
-  d_particleInitPos = d_particlePos;
-  if(readState == false) {
-    computeParticleAngleFromVel();
-    //this->sim_->injectKineticEnergy();
-  }
-  cout << "DPM2D::initActiveLangevin:: current temperature: " << setprecision(12) << getTemperature() << endl;
-}
-
-void DPM2D::activeLangevinLoop() {
-  this->sim_->integrate();
-}
-
+//***************************** NVE integrator *******************************//
 void DPM2D::initNVE(double Temp, bool readState) {
-  this->sim_ = new NVE(this, SimConfig(Temp, 0, 0));
-  this->sim_->noiseVar = sqrt(Temp);
-  this->sim_->d_thermalVel.resize(d_particlePos.size());
+  this->sim_ = new NVE(this, SimConfig(Temp));
+  this->sim_->d_rand.resize(numParticles * nDim);
   resetLastPositions();
-  d_particleInitPos.resize(numParticles * nDim);
-  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlePositions();
-  d_particleInitPos = d_particlePos;
+  setInitialPositions();
+  setInitialParticlePositions();
   shift = true;
   if(readState == false) {
     this->sim_->injectKineticEnergy();
@@ -3628,18 +3776,16 @@ void DPM2D::NVELoop() {
 
 //******************* NVE integrator with velocity rescale *******************//
 void DPM2D::initNVERescale(double Temp) {
-  this->sim_ = new NVERescale(this, SimConfig(Temp, 0, 0));
+  this->sim_ = new NVERescale(this, SimConfig(Temp));
   resetLastPositions();
-  d_particleInitPos.resize(numParticles * nDim);
-  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlePositions();
-  d_particleInitPos = d_particlePos;
+  setInitialPositions();
+  setInitialParticlePositions();
   shift = true;
   // initialize velocities to desired temperature
-  double noiseVar = sqrt(Temp);
+  double amplitude = sqrt(Temp);
   thrust::device_vector<double> d_thermalVel(numParticles * nDim);
   thrust::counting_iterator<long> index_sequence_begin(0);
-  thrust::transform(index_sequence_begin, index_sequence_begin + numParticles * nDim, d_thermalVel.begin(), gaussNum(0.f,noiseVar));
+  thrust::transform(index_sequence_begin, index_sequence_begin + numParticles * nDim, d_thermalVel.begin(), gaussNum(0.f,amplitude));
   long s_nDim(nDim);
   auto r = thrust::counting_iterator<long>(0);
   double* vel = thrust::raw_pointer_cast(&d_vel[0]);
@@ -3674,76 +3820,11 @@ void DPM2D::NVERescaleLoop() {
   this->sim_->integrate();
 }
 
-
-void DPM2D::initBrownian(double Temp, double gamma, bool readState) {
-  this->sim_ = new Brownian(this, SimConfig(Temp, 0, 0));
-  this->sim_->gamma = gamma;
-  this->sim_->noiseVar = sqrt(2. * Temp * gamma);
-  this->sim_->d_thermalVel.resize(d_particleVel.size());
-  resetLastPositions();
-  if(readState == false) {
-    this->sim_->injectKineticEnergy();
-  }
-  d_particleInitPos.resize(numParticles * nDim);
-  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlePositions();
-  d_particleInitPos = d_particlePos;
-  cout << "DPM2D::initBrownian:: current temperature: " << setprecision(12) << getParticleTemperature() << endl;
-}
-
-void DPM2D::brownianLoop() {
-  this->sim_->integrate();
-}
-
-void DPM2D::initActiveBrownian(double Dr, double driving, bool readState) {
-  this->sim_ = new ActiveBrownian(this, SimConfig(0, Dr, driving));
-  this->sim_->d_rand.resize(numParticles);
-  resetLastPositions();
-  if(readState == false) {
-    this->sim_->injectKineticEnergy();
-    computeParticleAngleFromVel();
-  }
-  d_particleInitPos.resize(numParticles * nDim);
-  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlePositions();
-  d_particleInitPos = d_particlePos;
-  cout << "DPM2D::initActiveBrownian:: current temperature: " << setprecision(12) << getTemperature() << endl;
-}
-
-void DPM2D::activeBrownianLoop() {
-  this->sim_->integrate();
-}
-
-void DPM2D::initActiveBrownianPlastic(double Dr, double driving, double gamma, bool readState) {
-  this->sim_ = new ActiveBrownianPlastic(this, SimConfig(0, Dr, driving));
-  this->sim_->lcoeff1 = exp(-gamma * dt);
-  this->sim_->d_rand.resize(numParticles);
-  d_l0Vel.resize(numVertices);
-  thrust::fill(d_l0Vel.begin(), d_l0Vel.end(), double(0));
-  resetLastPositions();
-  d_particleInitPos.resize(numParticles * nDim);
-  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlePositions();
-  d_particleInitPos = d_particlePos;
-  if(readState == false) {
-    this->sim_->injectKineticEnergy();
-    computeParticleAngleFromVel();
-  }
-  cout << "DPM2D::initActiveBrownianPlastic:: current temperature: " << setprecision(12) << getTemperature() << endl;
-}
-
-void DPM2D::activeBrownianPlasticLoop() {
-  this->sim_->integrate();
-}
-
-//************************* rigid particle simulators ************************//
+//********************* integrators for rigid particles **********************//
 void DPM2D::initRigidLangevin(double Temp, double gamma, bool readState) {
-  this->sim_ = new RigidLangevin(this, SimConfig(Temp, 0, 0));
+  this->sim_ = new RigidLangevin(this, SimConfig(Temp));
   this->sim_->gamma = gamma;
-  this->sim_->noiseVar = sqrt(2. * Temp * gamma);
-  this->sim_->lcoeff1 = 0.25 * dt * sqrt(dt) * gamma * this->sim_->noiseVar;
-  this->sim_->lcoeff2 = 0.5 * sqrt(dt) * this->sim_->noiseVar;
-  this->sim_->lcoeff3 = (0.5 / sqrt(3)) * sqrt(dt) * dt * this->sim_->noiseVar;
+  this->sim_->noise = sqrt(2. * Temp * gamma);
   this->sim_->d_rand.resize(d_particleVel.size());
   this->sim_->d_rando.resize(d_particleVel.size());
   this->sim_->d_thermalVel.resize(d_particleVel.size());
@@ -3751,10 +3832,8 @@ void DPM2D::initRigidLangevin(double Temp, double gamma, bool readState) {
   initRotationalVariables(getNumVertices(), getNumParticles());
   initDeltaVariables(getNumVertices(), getNumParticles());
   resetLastPositions();
-  d_particleInitPos.resize(numParticles * nDim);
-  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlePositions();
-  d_particleInitPos = d_particlePos;
+  setInitialPositions();
+  setInitialParticlePositions();
   if(readState == false) {
     this->sim_->injectKineticEnergy();
     cout << "DPM2D::initRigidLangevin:: current temperature: " << setprecision(12) << getParticleTemperature() << endl;
@@ -3767,18 +3846,15 @@ void DPM2D::rigidLangevinLoop() {
   this->sim_->integrate();
 }
 
-//************************* rigid particle simulators ************************//
+//************************* NVE for rigid particles **************************//
 void DPM2D::initRigidNVE(double Temp, bool readState) {
-  this->sim_ = new RigidNVE(this, SimConfig(Temp, 0, 0));
-  this->sim_->noiseVar = sqrt(Temp);
-  this->sim_->d_thermalVel.resize(d_particlePos.size());
+  this->sim_ = new RigidNVE(this, SimConfig(Temp));
+  this->sim_->d_rand.resize(numParticles * nDim);
   initRotationalVariables(getNumVertices(), getNumParticles());
   initDeltaVariables(getNumVertices(), getNumParticles());
   resetLastPositions();
-  d_particleInitPos.resize(numParticles * nDim);
-  thrust::fill(d_particleInitPos.begin(), d_particleInitPos.end(), double(0));
-  calcParticlePositions();
-  d_particleInitPos = d_particlePos;
+  setInitialPositions();
+  setInitialParticlePositions();
   if(readState == false) {
     this->sim_->injectKineticEnergy();
     cout << "DPM2D::initRigidNVE:: current temperature: " << setprecision(12) << getParticleTemperature() << endl;
