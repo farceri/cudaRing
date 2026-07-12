@@ -1749,8 +1749,8 @@ __global__ void kernelCalcNeighborList(const double* pos, const double* rad, con
 				if(extractOtherVertex(vertexId, otherId, pos, rad, otherPos, otherRad)) {
 					bool isNeighbor = false;
 					radSum = thisRad + otherRad;
-					//isNeighbor = (-calcOverlap(thisPos, otherPos, radSum) < cutDistance);
-					isNeighbor = (calcDistance(thisPos, otherPos) < (cutDistance * radSum));
+					isNeighbor = (-calcOverlap(thisPos, otherPos, radSum) < cutDistance);
+					//isNeighbor = (calcDistance(thisPos, otherPos) < (cutDistance * radSum));
 					if (addedNeighbor < d_neighborListSize) {
 						d_neighborListPtr[vertexId * d_neighborListSize + addedNeighbor] = otherId*isNeighbor -1*(!isNeighbor);
 					}
@@ -1775,8 +1775,8 @@ __global__ void kernelCalcParticleNeighborList(const double* pPos, const double*
 			if(extractOtherParticle(particleId, otherId, pPos, pRad, otherPos, otherRad)) {
 				bool isNeighbor = false;
 				radSum = thisRad + otherRad;
-				//isNeighbor = (-calcOverlap(thisPos, otherPos, radSum) < cutDistance);
-				isNeighbor = (calcDistance(thisPos, otherPos) < (cutDistance * radSum));
+				isNeighbor = (-calcOverlap(thisPos, otherPos, radSum) < cutDistance);
+				//isNeighbor = (calcDistance(thisPos, otherPos) < (cutDistance * radSum));
 				if (addedNeighbor < d_partNeighborListSize) {
 					d_partNeighborListPtr[particleId * d_partNeighborListSize + addedNeighbor] = otherId*isNeighbor -1*(!isNeighbor);
 					//if(isNeighbor == true && particleId == 116) printf("particleId %ld \t otherId: %ld \t isNeighbor: %i \n", particleId, otherId, isNeighbor);
@@ -1837,7 +1837,7 @@ __global__ void kernelCalcGeometricContacts(const double* pos, const double* rad
 				if (extractNeighbor(vertexId, nListId, pos, rad, otherPos, otherRad)) {
 					bool isContact = false;
 					radSum = thisRad + otherRad;
-					isContact = calcDistance(thisPos, otherPos) < (gapSize * radSum);
+					isContact = (-calcOverlap(thisPos, otherPos, radSum) < gapSize);
 					if (isContact) {
 						if (addedContact < d_contactListSize) {
 							newContactId = d_particleIdListPtr[d_neighborListPtr[vertexId * d_neighborListSize + nListId]];
