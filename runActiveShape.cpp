@@ -4,6 +4,10 @@
 //
 // Include C++ header files
 
+// Example usage
+// ./runActiveShape /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02 <damping>=1e02 <l0Tau>=1e-01 <l0Delta>=1e02
+// <maxStep>=1e07 <initialStep>=0 <numParticles>=256 <mode>=0
+
 #include "include/DPM2D.h"
 #include "include/FileIO.h"
 #include "include/Simulator.h"
@@ -28,14 +32,15 @@ int main(int argc, char **argv) {
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
   bool readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
   // input variables
-  std::string inDir = argv[1], potType = argv[10], noiseType = argv[11], mode = argv[12];
-  double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]), l0Tau = atof(argv[5]), l0Diff = atof(argv[6]);
-  long maxStep = atof(argv[7]), initialStep = atof(argv[8]), numParticles = atol(argv[9]);
+  std::string inDir = argv[1], mode = argv[10];
+  double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]);
+  double l0Tau = atof(argv[5]), l0Delta = atof(argv[6]), kl0 = atof(argv[7]);
+  long maxStep = atof(argv[8]), initialStep = atof(argv[9]), numParticles = atol(argv[10]);
   // other variables
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double cutDistance, cutoff = 0.5, timeUnit = 0, diffUnit = 0, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, Pe;
   std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "shape/";
   // set simulation mode
   if(mode == "change") {
@@ -68,7 +73,7 @@ int main(int argc, char **argv) {
   }
   
   // set input and output
-  dirSample = whichDynamics + "l0Tau" + argv[5] + "-l0Diff" + argv[6] + "/";
+  dirSample = whichDynamics + "tl" + argv[5] + "-dl" + argv[6] + "-kl" + argv[7] + "/";
   ioDPMFile ioDPM(&dpm);
   if (readAndSaveSameDir == true) {//keep running the same dynamics
     readState = true;
@@ -110,27 +115,25 @@ int main(int argc, char **argv) {
   // initialize simulation
   sigma = dpm.getMeanParticleSize();
   timeUnit = sigma / sqrt(ec);
-  diffUnit = sigma * sigma / timeUnit;
   timeStep = dpm.setTimeStep(timeStep * timeUnit);
   cout << "Units - time: " << timeUnit << " space: " << sigma << " time step: " << timeStep << endl;
-  if(noiseType == "drivenBrownian") {
-    cout << "Driven Shape - damping: " << damping << " l0Tau: " << l0Tau << " l0Diff: " << l0Diff << endl;
-  } else {
-    cout << "Thermostat - damping: " << damping << " Tinject: " << Tinject << endl;
-    cout << "Active Shape - l0Tau: " << l0Tau << " l0Diff: " << l0Diff << endl;
-  }
+  cout << "Thermostat - damping: " << damping << " Tinject: " << Tinject << endl;
+  Pe = el * l0Delta * l0Delta / Tinject;
+  cout << "Activity - tl0: " << l0Tau << " deltal0: " << l0Delta << " Pe = kl * deltal0^2 / Tinject: " << Pe << endl;
+  cout << "Magnitudes - rest force: " << timeStep / l0Tau << " noise: " << sqrt(2. * l0Delta * timeStep);
+  cout << " interaction: " << timeStep * kl0 << endl;
   damping /= timeUnit;
   l0Tau *= timeUnit;
-  l0Diff *= diffUnit;
-  dpm.setActiveTensionParams(l0Tau, l0Diff);
-  ioDPM.saveDriveParams(outDir, damping);
+  l0Delta *= (sigma * sigma);
+  dpm.setActiveTensionParams(l0Tau, l0Delta, kl0);
+  ioDPM.saveDriveParams(outDir, damping, Pe);
 
   // initialize integration scheme
   dpm.initLangevin(Tinject, damping, readState);
   size = 2 * dpm.getMeanVertexRadius();
   cutDistance = dpm.setDisplacementCutoff(cutoff, size);
   dpm.calcNeighbors(cutDistance);
-  dpm.calcForceEnergy();;
+  dpm.calcForceEnergy();
   dpm.resetUpdateCount();
   waveQ = dpm.getDeformableWaveNumber();
   // record simulation time
@@ -178,6 +181,7 @@ int main(int argc, char **argv) {
         currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
         ioDPM.saveState(currentDir);
+        ioDPM.saveContacts(currentDir);
       }
     }
     if(linSave == true) {
@@ -185,6 +189,7 @@ int main(int argc, char **argv) {
         currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
         ioDPM.saveState(currentDir);
+        ioDPM.saveContacts(currentDir);
       }
     }
     step += 1;

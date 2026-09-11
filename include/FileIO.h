@@ -506,6 +506,7 @@ public:
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
     save2DFile(dirName + "shapes.dat", dpm_->getParticleShapes(), 3); // 3 is for area, perimeter and shape parameter
     save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
+    save1DFile(dirName + "restLengths.dat", dpm_->getRestLengths());
   }
 
   void saveDeformableActiveState(string dirName) {
@@ -554,7 +555,7 @@ public:
     saveNeighbors(dirName);
   }
 
-  void saveDriveParams(string dirName, double damping) {
+  void saveDriveParams(string dirName, double damping, double Pe = 0.) {
     string fileParams = dirName + "driveParams.dat";
     ofstream saveParams(fileParams.c_str());
     openOutputFile(fileParams);
@@ -564,11 +565,15 @@ public:
       dpm_->getSelfPropulsionParams(driving, taup);
       saveParams << "taup" << "\t" << taup << endl;
       saveParams << "f0" << "\t" << driving << endl;
+      saveParams << "Pe" << "\t" << Pe << endl;
     } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeShape) {
-      double l0Tau, l0Diff;
-      dpm_->getActiveTensionParams(l0Tau, l0Diff);
-      saveParams << "l0Tau" << "\t" << l0Tau << endl;
-      saveParams << "l0Diff" << "\t" << l0Diff << endl;
+      double l0Tau, l0Delta, kl0;//, l0Scale;
+      dpm_->getActiveTensionParams(l0Tau, l0Delta, kl0);//, l0Scale);
+      saveParams << "tl0" << "\t" << l0Tau << endl;
+      saveParams << "Dl0" << "\t" << l0Delta << endl;
+      saveParams << "kl0" << "\t" << kl0 << endl;
+      //saveParams << "l0Scale" << "\t" << l0Scale << endl;
+      saveParams << "Pe" << "\t" << Pe << endl;
     }
     saveParams.close();
   }

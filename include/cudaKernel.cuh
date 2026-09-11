@@ -50,6 +50,8 @@ __constant__ double d_LJfshift;
 // FENE constants
 __constant__ double d_stiff;
 __constant__ double d_extSq;
+// l0 interaction constant
+__constant__ double d_kl0;
 
 // vertex neighborList
 __constant__ long* d_neighborListPtr;
@@ -361,6 +363,15 @@ inline __device__ bool extractContact(const long particleId, const long nListId,
   	return false;
 }
 
+inline __device__ bool extractNeighborRestLength(const long vertexId, const long nListId, const double* l0, double& otherLength) {
+	auto otherId = d_neighborListPtr[vertexId * d_neighborListSize + nListId];
+  	if ((vertexId != otherId) && (otherId != -1)) {
+		otherLength = l0[otherId];
+    	return true;
+  	}
+  	return false;
+}
+
 //works only for 2D
 inline __device__ void calcParticlePos(const long particleId, const double* pos, double* partPos) {
   	// compute particle center of mass
@@ -526,6 +537,25 @@ __global__ void kernelCalcShapeForceEnergy(const double* a0, const double* area,
     	energy[vertexId] = shapeEnergy;
 		//printf("\n shape: vertexId %ld \t fx: %.13e \t fy: %.13e \n", vertexId, force[vertexId*d_nDim], force[vertexId*d_nDim+1]);
 	}
+}
+
+// segment-segment interaction for tension fluctuations
+__global__ void kernelCalcRestLengthInteraction(const double* l0, double* l0Vel) {
+  	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
+  	if (vertexId < d_numVertices) {
+    	auto otherLength = 0.;
+		// zero out the segment velocity
+		l0Vel[vertexId] = 0.;
+		auto thisLength = l0[vertexId];
+		// interaction with neighbor segments
+		if(d_maxNeighborListPtr[vertexId] > 0) {
+    		for (long nListId = 0; nListId < d_maxNeighborListPtr[vertexId]; nListId++) {
+				if (extractNeighborRestLength(vertexId, nListId, l0, otherLength)) {
+					l0Vel[vertexId] -= d_kl0 * (thisLength - otherLength);
+				}
+			}
+		}
+  	}
 }
 
 inline __device__ double calcContactInteraction(const double* thisPos, const double* otherPos, const double radSum, double* currentForce) {

@@ -87,7 +87,7 @@ public:
   // self-propulsion parameters
   double driving, taup;
   // active tension parameters
-  double l0Tau, l0Diff;
+  double l0Tau, l0Delta, kl0;//, l0Scale;
   // attraction constants
   double l1, l2;
   // Lennard-Jones constants
@@ -107,6 +107,7 @@ public:
   thrust::device_vector<double> d_theta;
   thrust::device_vector<double> d_perimeter;
   thrust::device_vector<double> d_l0Rest;
+  thrust::device_vector<double> d_l0Vel;
   thrust::device_vector<double> d_a0;
   thrust::device_vector<double> d_area;
   thrust::device_vector<double> d_theta0;
@@ -528,9 +529,9 @@ public:
 
   void getSelfPropulsionParams(double &driving_, double &taup_);
 
-  void setActiveTensionParams(double l0Tau_, double l0Diff_);
+  void setActiveTensionParams(double l0Tau_, double l0Delta_, double kl0_);
 
-  void getActiveTensionParams(double &l0Tau_, double &l0Diff_);
+  void getActiveTensionParams(double &l0Tau_, double &l0Delta_, double &kl0_);//, double &l0Scale_);
 
   void setAttractionConstants(double l1_, double l2_);
 
@@ -551,6 +552,8 @@ public:
   void addSelfPropulsion();
 
   void updateRestLength();
+  
+  void calcRestLengthInteraction();
 
   void calcForceEnergyGPU();
 

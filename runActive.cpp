@@ -4,6 +4,10 @@
 //
 // Include C++ header files
 
+// Example usage
+// ./runActive /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02 <damping>=1e02 <taup>=1e-01 <driving>=1e02
+// <maxStep>=1e07 <initialStep>=0 <numParticles>=256 <mode>=0
+
 #include "include/DPM2D.h"
 #include "include/FileIO.h"
 #include "include/Simulator.h"
@@ -36,7 +40,7 @@ int main(int argc, char **argv) {
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double cutDistance, cutoff = 0.5, timeUnit, forceUnit, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, Pe;
   std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "active/";
   // set simulation mode
   if(mode == "change") {
@@ -116,13 +120,13 @@ int main(int argc, char **argv) {
   forceUnit = ec / sigma;
   cout << "Units - time: " << timeUnit << " space: " << sigma << " time step: " << timeStep << endl;
   cout << "Thermostat - damping: " << damping << " Tinject: " << Tinject << " magnitude:" << sqrt(2. * Tinject * damping / timeStep) << endl;
-  cout << "Activity - taup: " << tp << " driving: " << driving;
-  cout << " Pe = 3 v_0 tau_p / sigma: " << 3 * (driving / damping) * tp / sigma << endl;
+  Pe = 3 * (driving / damping) * tp / sigma;
+  cout << "Activity - taup: " << tp << " driving: " << driving << " Pe = 3 v_0 tau_p / sigma: " << Pe << endl;
   damping /= timeUnit;
   tp *= timeUnit;
   driving *= forceUnit;
   dpm.setSelfPropulsionParams(driving, tp);
-  ioDPM.saveDriveParams(outDir, damping);
+  ioDPM.saveDriveParams(outDir, damping, Pe);
 
   // initialize integration scheme
   dpm.initLangevin(Tinject, damping, readState);
