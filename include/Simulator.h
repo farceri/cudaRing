@@ -146,7 +146,6 @@ public:
 
   virtual void updatePosition(double timeStep);
   virtual void updateVelocity(double timeStep);
-  virtual void conserveMomentum();
   virtual void integrate();
 };
 

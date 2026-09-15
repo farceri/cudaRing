@@ -4,6 +4,10 @@
 //
 // Include C++ header files
 
+// Example usage
+// ./compressNVE /dirPath/ <inDir>=0 <timstep>=1e-04 <Tinject>=0.5 <shape0>=1.14 <numParticles>=256 
+// <maxStep>=1e05 <lx>=4 <ly>=1 <potType>=wca <boxType>=square
+
 #include "include/DPM2D.h"
 #include "include/FileIO.h"
 #include "include/Simulator.h"
@@ -23,7 +27,7 @@ using namespace std;
 
 int main(int argc, char **argv) {
   // variables
-  bool read = false, readState = false, smooth = true;
+  bool read = false, readState = false, smooth = false;
   // input variables
   long numParticles = atol(argv[6]), maxStep = atof(argv[7]);
   double timeStep = atof(argv[3]), Tinject = atof(argv[4]), shape0 = atof(argv[5]), lx = atof(argv[8]), ly = atof(argv[9]);
@@ -33,7 +37,7 @@ int main(int argc, char **argv) {
   long step, iteration = 0, maxIterations = 5e06, maxSearchStep = 1500, searchStep = 0, updateCount;
   long printFreq = int(maxStep / 10), saveFreq = int(printFreq / 10), minStep = 20, numStep = 0;
   double sigma, polydispersity = 0.1, previousPhi, currentPhi = 0.1, deltaPhi = 2e-03, phiTh = 0.96, boxRadius = 0;
-  double cutDistance, cutoff = 0.5, LJcut = 1.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-02, timeUnit, prevEnergy = 0;
+  double cutDistance, cutoff = 0.5, LJcut = 1.5, forceTollerance = 1e-12, waveQ, FIREStep = 1e-03, timeUnit, prevEnergy = 0;
   double maxDelta, scaleFactor, size;
   double ea = 1e05, el = 20, eb = 10, ec = 1, ew = 10, thetaA = 1, thetaK = 0;
   thrust::host_vector<double> boxSize(nDim);
@@ -75,7 +79,10 @@ int main(int argc, char **argv) {
     } else {
       outDir = outDir + argv[6] + "-box" + argv[8] + argv[9] + "-A" + argv[5] + "/";
     }
-    cout << "Created output directory: " << outDir << endl;
+    if (std::experimental::filesystem::exists(outDir) == false) {
+      std::experimental::filesystem::create_directory(outDir);
+      cout << "Created output directory: " << outDir << endl;
+    }
     // initialize polydisperse packing and minimize soft particle packing with harmonic potential
     dpm.setPotentialType(simControlStruct::potentialEnum::harmonic);
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexVertex);

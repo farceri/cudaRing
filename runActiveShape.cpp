@@ -125,7 +125,7 @@ int main(int argc, char **argv) {
   damping /= timeUnit;
   l0Tau *= timeUnit;
   l0Delta *= (sigma * sigma);
-  dpm.setActiveTensionParams(l0Tau, l0Delta, kl0);
+  dpm.setActiveShapeParams(l0Tau, l0Delta, kl0);
   ioDPM.saveDriveParams(outDir, damping, Pe);
 
   // initialize integration scheme

@@ -4,6 +4,10 @@
 //
 // Include C++ header files
 
+// Example usage
+// ./runNVT /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02> <damping>=1e-02 <maxStep>=1e07 <initialStep>=0 
+// <numParticles>=256 <noiseType>=langevin <potType=wca <tensionType>=off <mode>=0
+
 #include "include/DPM2D.h"
 #include "include/FileIO.h"
 #include "include/Simulator.h"
@@ -28,15 +32,15 @@ int main(int argc, char **argv) {
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
   bool readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
   // input variables
-  std::string inDir = argv[1], noiseType = argv[8], potType = argv[9], mode = argv[10];
+  std::string inDir = argv[1], noiseType = argv[8], potType = argv[9], tensionType = argv[10], mode = argv[11];
   double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]);
   long maxStep = atof(argv[5]), initialStep = atof(argv[6]), numParticles = atol(argv[7]);
   // other variables
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double cutDistance, cutoff = 0.5, timeUnit = 0, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5;
-  std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "langevin";
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 1;
+  std::string outDir, energyFile, currentDir, dirSample, whichDynamics;
   // set simulation mode
   if(mode == "change") {
     readAndMakeNewDir = true;
@@ -55,8 +59,8 @@ int main(int argc, char **argv) {
     linSave = false;
     cout << "Run Log mode: make DYNAMICS-LOG directory, run dynamics with same parameters and save log-spaced trajectories" << endl;
   } else {
-    cout << "Default mode: make new directory path and run initial dynamics" << endl;
     readState = false;
+    cout << "Default mode: make new directory path and run initial dynamics" << endl;
   }
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
@@ -67,17 +71,26 @@ int main(int argc, char **argv) {
     dpm.setNoiseType(simControlStruct::noiseEnum::drivenBrownian);
     whichDynamics = "driven";
   } else {
+    whichDynamics = "langevin";
     cout << "Setting default langevin noise" << endl;
   }
   if(potType == "lj") {
     dpm.setPotentialType(simControlStruct::potentialEnum::lennardJones);
-    whichDynamics = whichDynamics + "-lj/";
+    whichDynamics = whichDynamics + "-lj";
     dpm.setLJcutoff(LJcut);
   } else if(potType == "wca") {
     dpm.setPotentialType(simControlStruct::potentialEnum::wca);
-    whichDynamics = whichDynamics + "-wca/";
+    whichDynamics = whichDynamics + "-wca";
   } else {
     cout << "Setting default harmonic potential" << endl;
+  }
+  if(tensionType == "tension") {
+    dpm.setTensionType(simControlStruct::tensionEnum::on);
+    whichDynamics = whichDynamics + "-tension/";
+    cout << "Tension is ON" << endl;
+  } else {
+    whichDynamics = whichDynamics + "/";
+    cout << "Tension is OFF" << endl;
   }
   if(smooth) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
@@ -104,7 +117,7 @@ int main(int argc, char **argv) {
   } else {//start a new dyanmics
     if(readAndMakeNewDir == true) {
       readState = true;
-      outDir = inDir + "../" + dirSample;
+      outDir = inDir + "../../" + dirSample;
     } else {
       if(std::experimental::filesystem::exists(inDir + whichDynamics) == false) {
         std::experimental::filesystem::create_directory(inDir + whichDynamics);
@@ -116,6 +129,7 @@ int main(int argc, char **argv) {
   cout << "inDir: " << inDir << endl << "outDir: " << outDir << endl;
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   dpm.setEnergyCosts(ea, el, eb, ec);
+  if(tensionType == "tension") dpm.setTension(g0);
   if(readState == true) {
     ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
   }
@@ -186,6 +200,7 @@ int main(int argc, char **argv) {
         currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
         ioDPM.saveState(currentDir);
+        ioDPM.saveContacts(currentDir);
       }
     }
     if(linSave == true) {
@@ -193,6 +208,7 @@ int main(int argc, char **argv) {
         currentDir = outDir + "/t" + std::to_string(initialStep + step) + "/";
         std::experimental::filesystem::create_directory(currentDir);
         ioDPM.saveState(currentDir);
+        ioDPM.saveContacts(currentDir);
       }
     }
     step += 1;

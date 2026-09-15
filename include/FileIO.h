@@ -467,30 +467,23 @@ public:
   
   void readDeformableState(string dirName, long numParticles_, long numVertices_, long nDim_) {
     thrust::host_vector<double> vel_(numVertices_ * nDim_);
-    thrust::host_vector<double> particlePos_(numParticles_ * nDim_);
     thrust::host_vector<double> particleAngle_(numParticles_);
     vel_ = read2DFile(dirName + "velocities.dat", numVertices_);
     dpm_->setVertexVelocities(vel_);
-  }
-
-  void readDeformableActiveState(string dirName, long numParticles_, long numVertices_, long nDim_) {
-    thrust::host_vector<double> vel_(numVertices_ * nDim_);
-    thrust::host_vector<double> particlePos_(numParticles_ * nDim_);
-    thrust::host_vector<double> particleAngle_(numParticles_);
-    vel_ = read2DFile(dirName + "velocities.dat", numVertices_);
-    dpm_->setVertexVelocities(vel_);
-    particleAngle_ = read1DFile(dirName + "particleAngles.dat", numParticles_);
-    dpm_->setParticleAngles(particleAngle_);
-  }
-
-  void readRigidState(string dirName, long numParticles_, long nDim_) {;
-    thrust::host_vector<double> particleVel_(numParticles_ * nDim_);
-    thrust::host_vector<double> particleAngvel_(numParticles_);
-    particleVel_ = read2DFile(dirName + "particleVel.dat", numParticles_);
-    dpm_->setParticleVelocities(particleVel_);
-    particleAngvel_ = read1DFile(dirName + "particleAngvel.dat", numParticles_);
-    dpm_->setParticleAngularVelocities(particleAngvel_);
-
+    if(dpm_->simControl.tensionType == simControlStruct::tensionEnum::on) {
+      thrust::host_vector<double> gamma0_(numVertices_);
+      gamma0_ = read1DFile(dirName + "tensions.dat", numVertices_);
+      dpm_->setTensions(gamma0_);
+    }
+    if(dpm_->simControl.particleType == simControlStruct::particleEnum::active) {
+      thrust::host_vector<double> particleAngle_(numParticles_);
+      particleAngle_ = read1DFile(dirName + "particleAngles.dat", numParticles_);
+      dpm_->setParticleAngles(particleAngle_);
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
+      thrust::host_vector<double> g0Rest_(numVertices_);
+      g0Rest_ = read1DFile(dirName + "restTensions.dat", numVertices_);
+      dpm_->setRestTensions(g0Rest_);
+    }
   }
 
   void saveState(string dirName) {
@@ -504,25 +497,16 @@ public:
   void saveDeformableState(string dirName) {
     save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
+    save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
     save2DFile(dirName + "shapes.dat", dpm_->getParticleShapes(), 3); // 3 is for area, perimeter and shape parameter
-    save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
-    save1DFile(dirName + "restLengths.dat", dpm_->getRestLengths());
-  }
-
-  void saveDeformableActiveState(string dirName) {
-    save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
-    save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
-    save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
-  }
-
-  void saveRigidState(string dirName) {
-    save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
-    save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
-    //save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
-    save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
-    save2DFile(dirName + "particleVel.dat", dpm_->getParticleVelocities(), dpm_->nDim);
-    save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
-    save1DFile(dirName + "particleAngvel.dat", dpm_->getParticleAngularVelocities());
+    if(dpm_->simControl.tensionType == simControlStruct::tensionEnum::on) {
+      save1DFile(dirName + "tensions.dat", dpm_->getTensions());
+    }
+    if(dpm_->simControl.particleType == simControlStruct::particleEnum::active) {
+      save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
+      save1DFile(dirName + "restTensions.dat", dpm_->getRestTensions());
+    }
   }
 
   void saveContacts(string dirName) {
@@ -567,15 +551,39 @@ public:
       saveParams << "f0" << "\t" << driving << endl;
       saveParams << "Pe" << "\t" << Pe << endl;
     } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeShape) {
-      double l0Tau, l0Delta, kl0;//, l0Scale;
-      dpm_->getActiveTensionParams(l0Tau, l0Delta, kl0);//, l0Scale);
+      double l0Tau, l0Delta, kl0;
+      dpm_->getActiveShapeParams(l0Tau, l0Delta, kl0);
       saveParams << "tl0" << "\t" << l0Tau << endl;
       saveParams << "Dl0" << "\t" << l0Delta << endl;
       saveParams << "kl0" << "\t" << kl0 << endl;
-      //saveParams << "l0Scale" << "\t" << l0Scale << endl;
+      saveParams << "Pe" << "\t" << Pe << endl;
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
+      double g0Tau, g0Delta;
+      dpm_->getActiveTensionParams(g0Tau, g0Delta);
+      saveParams << "tg0" << "\t" << g0Tau << endl;
+      saveParams << "Dg0" << "\t" << g0Delta << endl;
       saveParams << "Pe" << "\t" << Pe << endl;
     }
     saveParams.close();
+  }
+
+  void readRigidState(string dirName, long numParticles_, long nDim_) {;
+    thrust::host_vector<double> particleVel_(numParticles_ * nDim_);
+    thrust::host_vector<double> particleAngvel_(numParticles_);
+    particleVel_ = read2DFile(dirName + "particleVel.dat", numParticles_);
+    dpm_->setParticleVelocities(particleVel_);
+    particleAngvel_ = read1DFile(dirName + "particleAngvel.dat", numParticles_);
+    dpm_->setParticleAngularVelocities(particleAngvel_);
+  }
+
+  void saveRigidState(string dirName) {
+    save2DFile(dirName + "positions.dat", dpm_->getVertexPositions(), dpm_->nDim);
+    save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
+    //save2DFile(dirName + "forces.dat", dpm_->getVertexForces(), dpm_->nDim);
+    save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
+    save2DFile(dirName + "particleVel.dat", dpm_->getParticleVelocities(), dpm_->nDim);
+    save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
+    save1DFile(dirName + "particleAngvel.dat", dpm_->getParticleAngularVelocities());
   }
 
   void saveSPDPMPacking(string dirName) {

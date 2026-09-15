@@ -4,6 +4,10 @@
 //
 // Include C++ header files
 
+// Example usage
+// ./runNVE /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02> <maxStep>=1e07 <initialStep>=0 
+// <numParticles>=256 <potType=wca <intType>=smooth <tensionType>=off <mode>=0
+
 #include "include/DPM2D.h"
 #include "include/FileIO.h"
 #include "include/Simulator.h"
@@ -29,14 +33,14 @@ int main(int argc, char **argv) {
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
   bool readState = true, logSave = false, linSave = true, saveFinal = true;
   // input variables
-  std::string inDir = argv[1], potType = argv[7], intType = argv[8], mode = argv[10];
+  std::string inDir = argv[1], potType = argv[7], intType = argv[8], tensionType = argv[9], mode = argv[10];
   double timeStep = atof(argv[2]), Tinject = atof(argv[3]);
   long maxStep = atof(argv[4]), initialStep = atof(argv[5]), numParticles = atol(argv[6]);
   // other variables
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10); 
   double cutDistance, cutoff = 0.5, timeUnit = 0, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 1;
   std::string outDir, energyFile, currentDir, dirSample, whichDynamics;
   // set simulation mode
   if(mode == "change") {
@@ -56,20 +60,29 @@ int main(int argc, char **argv) {
     linSave = false;
     cout << "Run Log mode: make DYNAMICS-LOG directory, run dynamics with same parameters and save log-spaced trajectories" << endl;
   } else {
+    readState = false;
     cout << "Default mode: make new directory path and run initial dynamics" << endl;
   }
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
   if(potType == "lj") {
     dpm.setPotentialType(simControlStruct::potentialEnum::lennardJones);
-    whichDynamics = "nve-lj/";
+    whichDynamics = "nve-lj";
     dpm.setLJcutoff(LJcut);
   } else if(potType == "wca") {
     dpm.setPotentialType(simControlStruct::potentialEnum::wca);
-    whichDynamics = "nve-wca/";
+    whichDynamics = "nve-wca";
   } else {
     cout << "Setting default harmonic potential" << endl;
-    whichDynamics = "nve/";
+    whichDynamics = "nve";
+  }
+  if(tensionType == "tension") {
+    dpm.setTensionType(simControlStruct::tensionEnum::on);
+    whichDynamics = whichDynamics + "-tension/";
+    cout << "Tension is ON" << endl;
+  } else {
+    whichDynamics = whichDynamics + "/";
+    cout << "Tension is OFF" << endl;
   }
   if(intType == "smooth") {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
@@ -109,6 +122,7 @@ int main(int argc, char **argv) {
   cout << "inDir: " << inDir << endl << "outDir: " << outDir << endl;
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   dpm.setEnergyCosts(ea, el, eb, ec);
+  if(tensionType == "tension") dpm.setTension(g0);
   if(readState == true) {
     ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
   }

@@ -55,6 +55,7 @@ DPM2D::DPM2D(long nParticles, long dim, long nVertexPerParticle) {
 	simControl.simulationType = simControlStruct::simulationEnum::gpu;
 	simControl.particleType = simControlStruct::particleEnum::passive;
 	simControl.shapeType = simControlStruct::shapeEnum::deformable;
+	simControl.tensionType = simControlStruct::tensionEnum::off;
 	simControl.noiseType = simControlStruct::noiseEnum::langevin;
 	simControl.potentialType = simControlStruct::potentialEnum::harmonic;
 	simControl.interactionType = simControlStruct::interactionEnum::vertexVertex;
@@ -67,6 +68,7 @@ DPM2D::DPM2D(long nParticles, long dim, long nVertexPerParticle) {
 	el = 20;
 	eb = 10;
 	ec = 1;
+  g0 = 0;
   ew = 1e03;
   cutDistance = 1;
   updateCount = 0;
@@ -130,6 +132,38 @@ void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
   thrust::fill(d_theta0.begin(), d_theta0.end(), double(0));
   thrust::fill(d_particleRad.begin(), d_particleRad.end(), double(0));
   thrust::fill(d_particlePos.begin(), d_particlePos.end(), double(0));
+  switch (simControl.tensionType) {
+    case simControlStruct::tensionEnum::on:
+    d_gamma0.resize(numVertices_);
+    thrust::fill(d_gamma0.begin(), d_gamma0.end(), double(0));
+    break;
+    default:
+    break;
+  }
+  // set dynamical variables for active particles
+  switch (simControl.particleType) {
+    case simControlStruct::particleEnum::active:
+    d_randAngle.resize(numParticles_);
+    d_particleAngle.resize(numParticles_);
+    thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
+    thrust::fill(d_particleAngle.begin(), d_particleAngle.end(), double(0));
+    case simControlStruct::particleEnum::activeTension:
+    d_g0Rest.resize(numVertices_);
+    d_randAngle.resize(numVertices_);
+    thrust::fill(d_g0Rest.begin(), d_g0Rest.end(), double(0));
+    thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
+    break;
+    case simControlStruct::particleEnum::activeShape:
+    d_l0Vel.resize(numVertices_);
+    d_l0Rest.resize(numVertices_);
+    d_randAngle.resize(numVertices_);
+    thrust::fill(d_l0Vel.begin(), d_l0Vel.end(), double(0));
+    thrust::fill(d_l0Rest.begin(), d_l0Rest.end(), double(0));
+    thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
+    break;
+    default:
+    break;
+  }
 }
 
 void DPM2D::initVertexWallForce(long numVertices_) {
@@ -367,22 +401,14 @@ void DPM2D::setParticleType(simControlStruct::particleEnum particleType_) {
   if(simControl.particleType == simControlStruct::particleEnum::passive) {
     cout << "DPM2D::setParticleType: particleType: passive" << endl;
   } else if(simControl.particleType == simControlStruct::particleEnum::active) {
-    d_particleAngle.resize(numParticles);
-    d_randAngle.resize(numParticles);
-    thrust::fill(d_particleAngle.begin(), d_particleAngle.end(), double(0));
-    thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
     cout << "DPM2D::setParticleType: particleType: active" << endl;
   } else if(simControl.particleType == simControlStruct::particleEnum::activeShape) {
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // THESE INITIALIZATIONS ARE DONE IN setActiveTensionParams() AS THE NUMBER OF VERTICES IS NOT KNOWN AT THIS POINT //
-    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //d_l0Rest.resize(numVertices);
-    //thrust::fill(d_l0Rest.begin(), d_l0Rest.end(), double(0));
-    //d_randAngle.resize(numParticles);
-    //thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
     cout << "DPM2D::setParticleType: particleType: activeShape" << endl;
+  } else if(simControl.particleType == simControlStruct::particleEnum::activeTension) {
+    setTensionType(simControlStruct::tensionEnum::on);
+    cout << "DPM2D::setParticleType: particleType: activeTension" << endl;
   } else {
-    cout << "DPM2D::setParticleType: please specify valid particleType: passive, active or activeShape" << endl;
+    cout << "DPM2D::setParticleType: please specify valid particleType: passive, active, activeShape or activeTension" << endl;
   }
 	syncSimControlToDevice();
 }
@@ -408,6 +434,23 @@ void DPM2D::setShapeType(simControlStruct::shapeEnum shapeType_) {
 simControlStruct::shapeEnum DPM2D::getShapeType() {
 	syncSimControlFromDevice();
 	return simControl.shapeType;
+}
+
+void DPM2D::setTensionType(simControlStruct::tensionEnum tensionType_) {
+	simControl.tensionType = tensionType_;
+  if(simControl.tensionType == simControlStruct::tensionEnum::on) {
+    cout << "DPM2D::setTensionType: tensionType: on" << endl;
+  } else if(simControl.tensionType == simControlStruct::tensionEnum::off) {
+    cout << "DPM2D::setTensionType: tensionType: off" << endl;
+  } else {
+    cout << "DPM2D::setTensionType: please specify valid tensionType: on or off" << endl;
+  }
+	syncSimControlToDevice();
+}
+
+simControlStruct::tensionEnum DPM2D::getTensionType() {
+	syncSimControlFromDevice();
+	return simControl.tensionType;
 }
 
 void DPM2D::setNoiseType(simControlStruct::noiseEnum noiseType_) {
@@ -709,6 +752,26 @@ thrust::host_vector<double> DPM2D::getRestAngles() {
   thrust::host_vector<double> theta0FromDevice;
   theta0FromDevice = d_theta0;
   return theta0FromDevice;
+}
+
+void DPM2D::setTensions(thrust::host_vector<double> &gamma0_) {
+  d_gamma0 = gamma0_;
+}
+
+thrust::host_vector<double> DPM2D::getTensions() {
+  thrust::host_vector<double> gamma0FromDevice;
+  gamma0FromDevice = d_gamma0;
+  return gamma0FromDevice;
+}
+
+void DPM2D::setRestTensions(thrust::host_vector<double> &g0Rest_) {
+  d_g0Rest = g0Rest_;
+}
+
+thrust::host_vector<double> DPM2D::getRestTensions() {
+  thrust::host_vector<double> g0RestFromDevice;
+  g0RestFromDevice = d_g0Rest;
+  return g0RestFromDevice;
 }
 
 thrust::host_vector<double> DPM2D::getSegmentLengths() {
@@ -1376,16 +1439,37 @@ void DPM2D::removeCOMDrift() {
   thrust::for_each(r, r + numVertices, removeDrift);
 }
 
+void DPM2D::removeCOMVelocityDrift() {
+  double *vel = thrust::raw_pointer_cast(&d_vel[0]);
+  // compute mean velocity components
+  thrust::device_vector<double> vel_x(numVertices), vel_y(numVertices);
+  thrust::device_vector<long> idx(numVertices), idy(numVertices);
+  thrust::sequence(idx.begin(), idx.end(), 0, 2);
+  thrust::sequence(idy.begin(), idy.end(), 1, 2);
+  thrust::gather(idx.begin(), idx.end(), d_vel.begin(), vel_x.begin());
+  thrust::gather(idy.begin(), idy.end(), d_vel.begin(), vel_y.begin());
+  double meanVx = thrust::reduce(vel_x.begin(), vel_x.end(), 0.0, thrust::plus<double>()) / numVertices;
+  double meanVy = thrust::reduce(vel_y.begin(), vel_y.end(), 0.0, thrust::plus<double>()) / numVertices;
+
+  long s_nDim(nDim);
+  auto r = thrust::counting_iterator<long>(0);
+  auto removeVelDrift = [=] __device__ (long vId) {
+    vel[vId * s_nDim] -= meanVx;
+    vel[vId * s_nDim + 1] -= meanVy;
+  };
+  thrust::for_each(r, r + numVertices, removeVelDrift);
+}
+
 void DPM2D::checkMaxDisplacement() {
   double maxDelta;
   maxDelta = getMaxDisplacement();
   if(3*maxDelta > cutoff) {
     calcNeighborList(cutDistance);
     resetLastPositions();
-    if(shift == true) {
-      removeCOMDrift();
-    }
     updateCount += 1;
+    if(shift == true) {
+      removeCOMVelocityDrift();
+    }
     //cout << "DPM2D::checkMaxDisplacement - updated neighbors, maxDelta: " << maxDelta << " cutoff: " << cutoff << endl;
   }
 }
@@ -1401,10 +1485,10 @@ void DPM2D::checkDisplacement() {
   if(sumFlag != 0) {
     calcNeighborList(cutDistance);
     resetLastPositions();
-    if(shift == true) {
-      removeCOMDrift();
-    }
     updateCount += 1;
+    if(shift == true) {
+      removeCOMVelocityDrift();
+    }
   }
 }
 
@@ -1645,7 +1729,7 @@ void DPM2D::setScaledRandomParticles(double phi0, double extraRad_, double lx, d
   double areaSum = 0;
   for (long particleId = 0; particleId < numParticles; particleId++) {
     for(long dim = 0; dim < nDim; dim++) {
-      d_particlePos[particleId * nDim + dim] = 0.95 * d_boxSize[dim] * drand48(); // 0.95 to avoid edge effects
+      d_particlePos[particleId * nDim + dim] = (0.96 * drand48() + 0.02) * d_boxSize[dim]; // to avoid edge effects
     }
     d_particleRad[particleId] = extraRad * sqrt((2. * d_a0[particleId]) / (d_numVertexInParticleList[particleId] * sin(2. * PI / d_numVertexInParticleList[particleId])));
     areaSum += PI * d_particleRad[particleId] * d_particleRad[particleId];
@@ -1886,6 +1970,25 @@ void DPM2D::setEnergyCosts(double ea_, double el_, double eb_, double ec_) {
   cudaMemcpyToSymbol(d_ec, &ec, sizeof(ec));
 }
 
+void DPM2D::setTension(double g0_, bool readState_) {
+  g0 = g0_;
+  if(!readState_) thrust::fill(d_gamma0.begin(), d_gamma0.end(), double(g0_));
+  else cout << "DPM2D::setTension: reading state, not resetting d_gamma0" << endl;
+}
+
+void DPM2D::setActiveTensionParams(double g0Tau_, double g0Delta_, bool readState_) {
+  g0Tau = g0Tau_;
+  g0Delta = g0Delta_;
+  if(!readState_) d_g0Rest = d_gamma0;
+  cout << "SP2D::setActiveTensionParams:: g0Tau: " << g0Tau << " g0Delta: " << g0Delta << endl;
+}
+
+void DPM2D::getActiveTensionParams(double &g0Tau_, double &g0Delta_) {
+  g0Tau_ = g0Tau;
+  g0Delta_ = g0Delta;
+  //cout << "SP2D::getActiveTensionParams:: g0Tau: " << g0Tau_ << " g0Delta: " << g0Delta_ << endl;
+}
+
 void DPM2D::setSelfPropulsionParams(double driving_, double taup_) {
   driving = driving_;
   taup = taup_;
@@ -1898,29 +2001,21 @@ void DPM2D::getSelfPropulsionParams(double &driving_, double &taup_) {
   //cout << "SP2D::getSelfPropulsionParams:: driving: " << driving_ << " taup: " << taup_ << endl;
 }
 
-void DPM2D::setActiveTensionParams(double l0Tau_, double l0Delta_, double kl0_) {
+void DPM2D::setActiveShapeParams(double l0Tau_, double l0Delta_, double kl0_) {
   l0Tau = l0Tau_;
   l0Delta = l0Delta_;
-  d_l0Rest.resize(numVertices);
-  d_l0Rest = d_l0;
-  //if (l0Scale_ > 1) {
-  //  thrust::transform(d_l0Rest.begin(), d_l0Rest.end(), thrust::make_constant_iterator(l0Scale_), d_l0Rest.begin(), thrust::multiplies<double>());
-  //  cout << "SP2D::setSelfActiveTensionParams:: l0Tau: " << l0Tau << " l0Delta: " << l0Delta << " l0Scale: " << l0Scale_ << endl;
-  //}
-  d_randAngle.resize(numVertices);
-  thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
-  d_l0Vel.resize(numVertices);
-  thrust::fill(d_l0Vel.begin(), d_l0Vel.end(), double(0));
   kl0 = kl0_;
   cudaMemcpyToSymbol(d_kl0, &kl0, sizeof(kl0));
+  // set rest lengths to current rest lengths
+  d_l0Rest = d_l0; // this works only when initializing the system, TODO: make function to save and read l0Rest
+  cout << "SP2D::setActiveShapeParams:: l0Tau: " << l0Tau << " l0Delta: " << l0Delta << " kl0: " << kl0 << endl;
 }
 
-void DPM2D::getActiveTensionParams(double &l0Tau_, double &l0Delta_, double &kl0_) {//, double &l0Scale_) {
+void DPM2D::getActiveShapeParams(double &l0Tau_, double &l0Delta_, double &kl0_) {//, double &l0Scale_) {
   l0Tau_ = l0Tau;
   l0Delta_ = l0Delta;
   kl0_ = kl0;
-  //l0Scale_ = l0Scale;
-  //cout << "SP2D::getActiveTensionParams:: l0Tau: " << l0Tau_ << " l0Delta: " << l0Delta_ << " l0Scale: " << l0Scale_ << endl;
+  //cout << "SP2D::getActiveShapeParams:: l0Tau: " << l0Tau_ << " l0Delta: " << l0Delta_ << " l0Scale: " << l0Scale_ << endl;
 }
 
 void DPM2D::setBoxEnergyCost(double ew_) {
@@ -1996,6 +2091,7 @@ void DPM2D::calcShapeForceEnergy() {
 	const double *l0 = thrust::raw_pointer_cast(&d_l0[0]);
   const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
 	const double *theta0 = thrust::raw_pointer_cast(&d_theta0[0]);
+  const double *gamma0 = thrust::raw_pointer_cast(&d_gamma0[0]);
   // dynamical variables
   const double *area = thrust::raw_pointer_cast(&d_area[0]);
 	const double *theta = thrust::raw_pointer_cast(&d_theta[0]);
@@ -2003,8 +2099,16 @@ void DPM2D::calcShapeForceEnergy() {
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
 	double *force = thrust::raw_pointer_cast(&d_force[0]);
 	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
-  // compute shape force
   kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, theta, pos, force, energy);
+  // compute shape force
+  switch (simControl.tensionType) {
+    case simControlStruct::tensionEnum::off:
+    kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, theta, pos, force, energy);
+    break;
+    case simControlStruct::tensionEnum::on:
+    kernelCalcShapeForceEnergyTension<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, gamma0, theta, pos, force, energy);
+    break;
+  }
 }
 
 void DPM2D::addSelfPropulsion() {
@@ -2047,6 +2151,26 @@ void DPM2D::addSelfPropulsion() {
   } else {
     cout << "DPM2D::addSelfPropulsion: self propulsion only implemented for 2D" << endl;
   }
+}
+
+void DPM2D::updateActiveTension() {
+  // update rest length
+  double s_dt(dt);
+  double s_g0Tau(g0Tau);
+  double s_g0Noise(g0Delta * sqrt(2. * dt / g0Tau));
+  //double s_g0Noise(sqrt(2. * g0Delta * dt));
+  auto r = thrust::counting_iterator<long>(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
+  thrust::transform(index_sequence_begin, index_sequence_begin + numVertices, d_randAngle.begin(), gaussNum(0.f,s_g0Noise));
+  double *gamma0 = thrust::raw_pointer_cast(&d_gamma0[0]);
+  const double *g0Rest = thrust::raw_pointer_cast(&d_g0Rest[0]);
+  const double *randAngle = thrust::raw_pointer_cast(&d_randAngle[0]);
+
+  auto integrateActiveTension = [=] __device__ (long vId) {
+		gamma0[vId] += randAngle[vId] - (gamma0[vId] - g0Rest[vId]) * s_dt / s_g0Tau;
+  };
+
+  thrust::for_each(r, r + numVertices, integrateActiveTension);
 }
 
 void DPM2D::updateRestLength() {
@@ -2107,6 +2231,9 @@ void DPM2D::calcForceEnergyGPU() {
     case simControlStruct::particleEnum::activeShape:
     calcRestLengthInteraction();
     updateRestLength();
+    break;
+    case simControlStruct::particleEnum::activeTension:
+    updateActiveTension();
     break;
     default:
     break;
@@ -3788,11 +3915,12 @@ void DPM2D::initNVE(double Temp, bool readState) {
   resetLastPositions();
   setInitialPositions();
   setInitialParticlePositions();
-  shift = true;
+  shift = false;
   if(readState == false) {
     this->sim_->injectKineticEnergy();
-  }
-  cout << "DPM2D::initNVE:: current temperature: " << setprecision(12) << getTemperature() << endl;
+    removeCOMVelocityDrift();
+    cout << "DPM2D::initNVE:: current temperature: " << setprecision(12) << getTemperature() << " drift removed" << endl;
+  } else cout << "DPM2D::initNVE:: current temperature: " << setprecision(12) << getTemperature() << endl;
 }
 
 void DPM2D::NVELoop() {

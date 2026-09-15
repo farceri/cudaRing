@@ -364,8 +364,3 @@ void RigidNVE::updateVelocity(double timeStep) {
 
   thrust::for_each(r, r + dpm_->numParticles, langevinUpdateRigidVel);
 }
-
-void RigidNVE::conserveMomentum() {
-  double *pVel = thrust::raw_pointer_cast(&(dpm_->d_particleVel[0]));
-  kernelConserveParticleMomentum<<<1, dpm_->dimBlock>>>(pVel);
-}

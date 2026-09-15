@@ -465,6 +465,20 @@ inline __device__ double calcFENEPerimeterForceEnergy(const double tL0, const do
   	return d_el * d_stiff * d_extSq * log(1 - pLength * pLength / (d_extSq * pL0 * pL0));
 }
 
+inline __device__ double calcTensionForceEnergy(const double nGamma, const double pGamma, const double nLength, const double pLength, const double* vPos, const double* nPos, const double* pPos, double* vertexForce) {
+    // Heaviside clip: prevent negative (expansive) tension
+    auto tG = fmax(nGamma, 0.0);
+    auto pG = fmax(pGamma, 0.0);
+    // force: pulls vertex toward both neighbors, magnitude = tension (not length-dependent)
+    #pragma unroll (MAXDIM)
+    for (long dim = 0; dim < d_nDim; dim++) {
+        vertexForce[dim] += tG * (nPos[dim] - vPos[dim]) / nLength + pG * (pPos[dim] - vPos[dim]) / pLength;
+    }
+    // only the "previous" segment's energy is counted here, to avoid double-counting
+    // (the "next" segment's energy will be counted when the next vertex processes it as its "previous")
+    return (pG * pLength);
+}
+
 inline __device__ double calcBendingForceEnergy(const double* preSegment, const double* nextSegment, const double thisAngleDelta, const double nextAngleDelta, const double preAngleDelta, double* vertexForce) {
 	double preNormalSegment[MAXDIM], nextNormalSegment[MAXDIM];
 	// get normal segments
@@ -536,6 +550,53 @@ __global__ void kernelCalcShapeForceEnergy(const double* a0, const double* area,
 		shapeEnergy += calcBendingForceEnergy(previousSegment, nextSegment, thisAngleDelta, nextAngleDelta, previousAngleDelta, &force[vertexId*d_nDim]);
     	energy[vertexId] = shapeEnergy;
 		//printf("\n shape: vertexId %ld \t fx: %.13e \t fy: %.13e \n", vertexId, force[vertexId*d_nDim], force[vertexId*d_nDim+1]);
+	}
+}
+
+// this, next and previous are for vertices belonging to the same particle
+__global__ void kernelCalcShapeForceEnergyTension(const double* a0, const double* area, const double* particlePos, const double* l0, const double* theta0, const double* gamma0, const double* theta, const double* pos, double* force, double* energy) {
+	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
+  	long particleId = d_particleIdListPtr[vertexId];
+  	if (vertexId < d_numVertices) {
+		double vertexPos[MAXDIM], nextPos[MAXDIM], previousPos[MAXDIM], partPos[MAXDIM];
+		double nextSegment[MAXDIM], previousSegment[MAXDIM];
+		auto particleArea = area[particleId];
+		auto shapeEnergy = 0.0;
+		// get interacting vertices' indices
+		auto nextId = getNextId(vertexId, particleId);
+	  	auto previousId = getPreviousId(vertexId, particleId);
+		// zero out the existing force and get particlePos
+    	for (long dim = 0; dim < d_nDim; dim++) {
+			force[vertexId * d_nDim + dim] = 0.0;
+			partPos[dim] = particlePos[particleId * d_nDim + dim];
+		}
+		// get positions relative to particle center of mass
+		getRelativeVertexPos(vertexId, pos, vertexPos, partPos);
+	  	getRelativeVertexPos(nextId, pos, nextPos, partPos);
+	  	getRelativeVertexPos(previousId, pos, previousPos, partPos);
+		// area force
+		shapeEnergy += calcAreaForceEnergy(a0[particleId], particleArea, nextPos, previousPos, &force[vertexId*d_nDim]) / d_numVertexInParticleListPtr[particleId];
+		// perimeter force
+		getSegment(nextPos, vertexPos, nextSegment);
+		getSegment(vertexPos, previousPos, previousSegment);
+	  	auto previousLength = calcNorm(previousSegment);
+	  	auto nextLength = calcNorm(nextSegment);
+	  	switch (d_simControl.monomerType) {
+			case simControlStruct::monomerEnum::harmonic:
+			shapeEnergy += calcPerimeterForceEnergy(l0[vertexId], l0[previousId], nextLength, previousLength, vertexPos, nextPos, previousPos, &force[vertexId*d_nDim]);
+			break;
+			case simControlStruct::monomerEnum::FENE:
+			shapeEnergy += calcFENEPerimeterForceEnergy(l0[vertexId], l0[previousId], nextLength, previousLength, vertexPos, nextPos, previousPos, &force[vertexId*d_nDim]);
+			break;
+		}
+		// surface tension
+		shapeEnergy += calcTensionForceEnergy(gamma0[vertexId], gamma0[previousId], nextLength, previousLength, vertexPos, nextPos, previousPos, &force[vertexId*d_nDim]);
+		// bending force
+	  	auto previousAngleDelta = theta[previousId] - theta0[previousId];
+	  	auto thisAngleDelta = theta[vertexId] - theta0[vertexId];
+	 	auto nextAngleDelta = theta[nextId] - theta0[nextId];
+		shapeEnergy += calcBendingForceEnergy(previousSegment, nextSegment, thisAngleDelta, nextAngleDelta, previousAngleDelta, &force[vertexId*d_nDim]);
+    	energy[vertexId] = shapeEnergy;
 	}
 }
 

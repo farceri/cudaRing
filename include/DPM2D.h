@@ -22,8 +22,9 @@ using std::string;
 struct simControlStruct {
   enum class simulationEnum {gpu, cpu, omp} simulationType;
   enum class geometryEnum {normal, fixedBox, fixedSides, roundBox} geometryType;
-  enum class particleEnum {passive, active, activeShape} particleType;
+  enum class particleEnum {passive, active, activeShape, activeTension} particleType;
   enum class shapeEnum {deformable, rigid} shapeType;
+  enum class tensionEnum {off, on} tensionType;
   enum class noiseEnum {langevin, baoab, brownian, drivenBrownian} noiseType;
   enum class potentialEnum {harmonic, lennardJones, adhesive, wca} potentialType;
   enum class interactionEnum {vertexVertex, vertexSmooth, cellSmooth, all} interactionType;
@@ -84,10 +85,13 @@ public:
   double el; // segment
   double eb; // bending
   double ec; // interaction
+  double g0; // tension
+  // active tension parameters
+  double g0Tau, g0Delta;
   // self-propulsion parameters
   double driving, taup;
-  // active tension parameters
-  double l0Tau, l0Delta, kl0;//, l0Scale;
+  // active shape parameters
+  double l0Tau, l0Delta, kl0;
   // attraction constants
   double l1, l2;
   // Lennard-Jones constants
@@ -102,15 +106,17 @@ public:
   // vertex shape variables
   thrust::device_vector<double> d_rad;
   thrust::host_vector<double> h_rad; //HOST
-  thrust::device_vector<double> d_l0;
+  thrust::device_vector<double> d_perimeter;
+  thrust::device_vector<double> d_area;
   thrust::device_vector<double> d_length;
   thrust::device_vector<double> d_theta;
-  thrust::device_vector<double> d_perimeter;
+  thrust::device_vector<double> d_a0;
+  thrust::device_vector<double> d_l0;
+  thrust::device_vector<double> d_theta0;
+  thrust::device_vector<double> d_gamma0;
+  thrust::device_vector<double> d_g0Rest;
   thrust::device_vector<double> d_l0Rest;
   thrust::device_vector<double> d_l0Vel;
-  thrust::device_vector<double> d_a0;
-  thrust::device_vector<double> d_area;
-  thrust::device_vector<double> d_theta0;
 
   // dynamical variables
   thrust::device_vector<double> d_pos;
@@ -235,6 +241,9 @@ public:
   void setShapeType(simControlStruct::shapeEnum shapeType_);
 	simControlStruct::shapeEnum getShapeType();
 
+  void setTensionType(simControlStruct::tensionEnum tensionType_);
+  simControlStruct::tensionEnum getTensionType();
+
   void setNoiseType(simControlStruct::noiseEnum noiseType_);
 	simControlStruct::noiseEnum getNoiseType();
 
@@ -292,6 +301,12 @@ public:
 
   void setRestAngles(thrust::host_vector<double> &theta0_);
   thrust::host_vector<double> getRestAngles();
+
+  void setTensions(thrust::host_vector<double> &gamma0_);
+  thrust::host_vector<double> getTensions();
+
+  void setRestTensions(thrust::host_vector<double> &g0Rest_);
+  thrust::host_vector<double> getRestTensions();
 
   thrust::host_vector<double> getSegmentLengths();
 
@@ -457,6 +472,8 @@ public:
 
   void removeCOMDrift();
 
+  void removeCOMVelocityDrift();
+
   void checkNeighbors();
 
   double getParticleMaxDisplacement();
@@ -525,13 +542,19 @@ public:
   // force and energy
   void setEnergyCosts(double ea_, double el_, double eb_, double ec_);
 
+  void setTension(double g0_, bool readState_ = false);
+
+  void setActiveTensionParams(double g0Tau_, double g0Delta_, bool readState_ = false);
+
+  void getActiveTensionParams(double &g0Tau_, double &g0Delta_);
+
   void setSelfPropulsionParams(double driving_, double taup_);
 
   void getSelfPropulsionParams(double &driving_, double &taup_);
 
-  void setActiveTensionParams(double l0Tau_, double l0Delta_, double kl0_);
+  void setActiveShapeParams(double l0Tau_, double l0Delta_, double kl0_);
 
-  void getActiveTensionParams(double &l0Tau_, double &l0Delta_, double &kl0_);//, double &l0Scale_);
+  void getActiveShapeParams(double &l0Tau_, double &l0Delta_, double &kl0_);
 
   void setAttractionConstants(double l1_, double l2_);
 
@@ -550,6 +573,8 @@ public:
   void calcShapeForceEnergy();
 
   void addSelfPropulsion();
+  
+  void updateActiveTension();
 
   void updateRestLength();
   
