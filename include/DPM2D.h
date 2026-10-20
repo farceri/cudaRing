@@ -21,7 +21,7 @@ using std::string;
 
 struct simControlStruct {
   enum class simulationEnum {gpu, cpu, omp} simulationType;
-  enum class geometryEnum {normal, fixedBox, fixedSides, roundBox} geometryType;
+  enum class geometryEnum {normal, fixedBox, fixedSides, roundBox, leesEdwards} geometryType;
   enum class particleEnum {passive, active, activeShape, activeTension} particleType;
   enum class shapeEnum {deformable, rigid} shapeType;
   enum class tensionEnum {off, on} tensionType;
@@ -86,6 +86,8 @@ public:
   double eb; // bending
   double ec; // interaction
   double g0; // tension
+  // Lees Edwards parameter
+  double LEstrain;
   // active tension parameters
   double g0Tau, g0Delta;
   // self-propulsion parameters
@@ -539,14 +541,22 @@ public:
 
   void initializeParticleAngles();
 
+  void setLEstrain(double LEstrain_);
+
+  void getLEstrain();
+
+  void applyLEShear(double LEstrain_);
+
   // force and energy
   void setEnergyCosts(double ea_, double el_, double eb_, double ec_);
 
-  void setTension(double g0_, bool readState_ = false);
+  void setTension(double g0_);
 
-  void setActiveTensionParams(double g0Tau_, double g0Delta_, bool readState_ = false);
+  void setActiveTensionParams(double g0Tau_, double g0Delta_);
 
   void getActiveTensionParams(double &g0Tau_, double &g0Delta_);
+
+  void initializeTensions();
 
   void setSelfPropulsionParams(double driving_, double taup_);
 

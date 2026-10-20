@@ -462,15 +462,15 @@ public:
     save1DFile(dirName + "particleAngvel.dat", dpm_->getParticleAngularVelocities());
   }
 
-  void readState(string dirName, long numParticles_, long numVertices_, long nDim_, bool initAngles = false) {
+  void readState(string dirName, long numParticles_, long numVertices_, long nDim_, bool initAngles = false, bool initTensions = false) {
     if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::deformable) {
-      readDeformableState(dirName, numParticles_, numVertices_, nDim_, initAngles);
+      readDeformableState(dirName, numParticles_, numVertices_, nDim_, initAngles, initTensions);
     } else if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::rigid) {
       readRigidState(dirName, numParticles_, nDim_);
     }
   }
   
-  void readDeformableState(string dirName, long numParticles_, long numVertices_, long nDim_, bool initAngles = false) {
+  void readDeformableState(string dirName, long numParticles_, long numVertices_, long nDim_, bool initAngles = false, bool initTensions = false) {
     thrust::host_vector<double> vel_(numVertices_ * nDim_);
     vel_ = read2DFile(dirName + "velocities.dat", numVertices_);
     dpm_->setVertexVelocities(vel_);
@@ -479,14 +479,18 @@ public:
         thrust::host_vector<double> particleAngle_(numParticles_);
         particleAngle_ = read1DFile(dirName + "particleAngles.dat", numParticles_);
         dpm_->setParticleAngles(particleAngle_);
+        cout << "FileIO::readDeformableState: read particle angles from file" << endl;
       }
     } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
-      thrust::host_vector<double> gamma0_(numVertices_);
-      gamma0_ = read1DFile(dirName + "tensions.dat", numVertices_);
-      dpm_->setTensions(gamma0_);
-      thrust::host_vector<double> g0Rest_(numVertices_);
-      g0Rest_ = read1DFile(dirName + "restTensions.dat", numVertices_);
-      dpm_->setRestTensions(g0Rest_);
+      if(initTensions == false) {
+        thrust::host_vector<double> gamma0_(numVertices_);
+        gamma0_ = read1DFile(dirName + "tensions.dat", numVertices_);
+        dpm_->setTensions(gamma0_);
+        thrust::host_vector<double> g0Rest_(numVertices_);
+        g0Rest_ = read1DFile(dirName + "restTensions.dat", numVertices_);
+        dpm_->setRestTensions(g0Rest_);
+        cout << "FileIO::readDeformableState: read tensions and rest tensions from file" << endl;
+      }
     }
   }
 

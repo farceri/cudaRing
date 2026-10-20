@@ -31,6 +31,9 @@ __constant__ long* d_numVertexInParticleListPtr;
 __constant__ long* d_firstVertexInParticleIdPtr;
 __constant__ long* d_particleIdListPtr;
 
+//leesEdwards strain
+__constant__ double d_LEstrain;
+
 // time step
 __constant__ double d_dt;
 // dimensionality factor
@@ -73,6 +76,16 @@ inline __device__ double pbcDistance(const double x1, const double x2, const lon
 	auto delta = x1 - x2;
 	auto size = d_boxSizePtr[dim];
 	return delta - size * round(delta / size); //round for distance, floor for position
+}
+
+//distance leesEdwards boundary conditions
+inline __device__ double pbcDistanceLE(const double x1, const double y1, const double x2, const double y2) {
+	auto deltax = (x1 - x2);
+	auto rounded = round(deltax); //need to store for lees-edwards BC
+	deltax -= rounded;
+	auto deltay = (y1 - y2);
+	deltay = deltay - rounded * d_LEstrain - round(deltay - rounded * d_LEstrain);
+	return deltay;
 }
 
 inline __device__ double boxDistance(const double x1, const double x2, const long dim) {
@@ -126,6 +139,7 @@ inline __device__ double calcNormSq(const double* segment) {
 inline __device__ double calcDistance(const double* thisVec, const double* otherVec) {
   	auto delta = 0.0;
 	auto distanceSq = 0.0;
+	double deltay, deltax, shifty;
   	//double r1, theta1, r2, theta2;
   	switch (d_simControl.geometryType) {
 		case simControlStruct::geometryEnum::normal:
@@ -159,12 +173,23 @@ inline __device__ double calcDistance(const double* thisVec, const double* other
 		}
 		return sqrt(distanceSq);
 		break;
+		case simControlStruct::geometryEnum::leesEdwards:
+		deltay = thisVec[1] - otherVec[1];
+		shifty = round(deltay / d_boxSizePtr[1]) * d_boxSizePtr[1];
+		deltax = thisVec[0] - otherVec[0];
+		deltax -= shifty * d_LEstrain;
+		deltax -= round(deltax / d_boxSizePtr[0]) * d_boxSizePtr[0];
+		deltay -= shifty;
+		distanceSq = deltax * deltax + deltay * deltay;
+		return sqrt(distanceSq);
+		break;
 	}
 }
 
 inline __device__ double calcDeltaAndDistance(const double* thisVec, const double* otherVec, double* deltaVec) {
 	auto delta = 0.0;
 	auto distanceSq = 0.0;
+	auto shifty = 0.0;
   	//double r1, theta1, r2, theta2, deltaR, deltaTheta;
 	switch (d_simControl.geometryType) {
 		case simControlStruct::geometryEnum::normal:
@@ -199,6 +224,16 @@ inline __device__ double calcDeltaAndDistance(const double* thisVec, const doubl
 			deltaVec[dim] = delta;
 			distanceSq += delta * delta;
 		}
+		return sqrt(distanceSq);
+		break;
+		case simControlStruct::geometryEnum::leesEdwards:
+		deltaVec[1] = thisVec[1] - otherVec[1];
+		shifty = round(deltaVec[1] / d_boxSizePtr[1]) * d_boxSizePtr[1];
+		deltaVec[0] = thisVec[0] - otherVec[0];
+		deltaVec[0] -= shifty * d_LEstrain;
+		deltaVec[0] -= round(deltaVec[0] / d_boxSizePtr[0]) * d_boxSizePtr[0];
+		deltaVec[1] -= shifty;
+		distanceSq = deltaVec[0] * deltaVec[0] + deltaVec[1] * deltaVec[1];
 		return sqrt(distanceSq);
 		break;
 	}

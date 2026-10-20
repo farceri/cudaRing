@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool initAngles = false,readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
+  bool initAngles = false, readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
   // input variables
   std::string inDir = argv[1], tensionType = argv[10], mode = argv[11];
   double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]), tp = atof(argv[5]), driving = atof(argv[6]);
@@ -111,10 +111,8 @@ int main(int argc, char **argv) {
   sigma = dpm.getMeanParticleSize();
   dpm.setEnergyCosts(ea, el, eb, ec);
   if(tensionType == "tension") dpm.setTension(g0);
-  if(readState == true) {
-    ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim, initAngles);
-  }
-  if(initAngles == true) dpm.initializeParticleAngles();
+  if(readState) ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim, initAngles);
+  if(initAngles) dpm.initializeParticleAngles();
   numVertices = dpm.getNumVertices();
   // output file
   energyFile = outDir + "energy.dat";

@@ -385,8 +385,10 @@ void DPM2D::setGeometryType(simControlStruct::geometryEnum geometryType_) {
     d_wallForce.resize(numVertices * nDim);
     thrust::fill(d_wallForce.begin(), d_wallForce.end(), double(0));
     cout << "SP2D::setGeometryType: geometryType: roundBox" << endl;
+  } else if(simControl.geometryType == simControlStruct::geometryEnum::leesEdwards) {
+    cout << "SP2D::setGeometryType: geometryType: leesEdwards" << endl;
   } else {
-    cout << "SP2D::setGeometryType: please specify valid geometryType: normal, fixedBox, fixedSides and roundBox" << endl;
+    cout << "SP2D::setGeometryType: please specify valid geometryType: normal, fixedBox, fixedSides, roundBox and leesEdwards" << endl;
   }
 	syncSimControlToDevice();
 }
@@ -1958,6 +1960,46 @@ void DPM2D::initializeParticleAngles() { // only works in 2D
   thrust::for_each(r, r + numParticles, computeAngleFromVel);
 }
 
+void DPM2D::setLEstrain(double LEstrain_) {
+	syncSimControlFromDevice();
+	if(simControl.geometryType == simControlStruct::geometryEnum::leesEdwards) {
+		LEstrain = LEstrain_;
+		cudaError err = cudaMemcpyToSymbol(d_LEstrain, &LEstrain, sizeof(LEstrain));
+		if(err != cudaSuccess) {
+			cout << "cudaMemcpyToSymbol Error: "<< cudaGetErrorString(err) << endl;
+		}
+	}
+	else {
+		cout << "DPM2D::setLEstrain: attempting to set LEstrain without using LE boundary conditions" << endl;
+	}
+  cout << "DPM2D::setLEstrain: LEstrain: " << LEstrain << endl;
+}
+
+double DPM2D::getLEstrain() {
+  double LEstrainFromDevice;
+	cudaError err = cudaMemcpyFromSymbol(&LEstrainFromDevice, d_LEstrain, sizeof(d_LEstrain));
+	if(err != cudaSuccess) {
+		cout << "cudaMemcpyFromSymbol Error: "<< cudaGetErrorString(err) << endl;
+	}
+	return LEstrainFromDevice;
+}
+
+void DPM2D::applyLEShear(double LEstrain_) {
+  long s_nDim(nDim);
+	auto r = thrust::counting_iterator<long>(0);
+	double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+	double *boxSize = thrust::raw_pointer_cast(&d_boxSize[0]);
+
+	auto shearPosition = [=] __device__ (long vId) {
+		double shearPos;
+		shearPos = pos[vId * s_nDim] + LEstrain_ * pos[vId * s_nDim + 1];
+		shearPos -= floor(shearPos / boxSize[0]) * boxSize[0];
+		pos[vId * s_nDim] = shearPos;
+	};
+
+	thrust::for_each(r, r + numVertices, shearPosition);
+}
+
 //*************************** force and energy *******************************//
 void DPM2D::setEnergyCosts(double ea_, double el_, double eb_, double ec_) {
   ea = ea_;
@@ -1970,23 +2012,18 @@ void DPM2D::setEnergyCosts(double ea_, double el_, double eb_, double ec_) {
   cudaMemcpyToSymbol(d_ec, &ec, sizeof(ec));
 }
 
-void DPM2D::setTension(double g0_, bool readState_) {
+void DPM2D::setTension(double g0_) {
   // readState_ is defaulted to false so when tensionType is on and activeTension is off the gamma0 are set here
   if(g0_ < 0) {
     g0_ = 1;
     cout << "DPM2D::setTension: input tension is negative, setting it to default value 1" << endl;
   }
   g0 = g0_;
-  if(!readState_) {
-    thrust::fill(d_gamma0.begin(), d_gamma0.end(), double(g0_));
-    cout << "DPM2D::setTension: setting d_gamma0 to input value g0_" << endl;
-  } else cout << "DPM2D::setTension: reading state, not resetting d_gamma0" << endl;
 }
 
-void DPM2D::setActiveTensionParams(double g0Tau_, double g0Delta_, bool readState_) {
+void DPM2D::setActiveTensionParams(double g0Tau_, double g0Delta_) {
   g0Tau = g0Tau_;
   g0Delta = g0Delta_;
-  if(!readState_) d_g0Rest = d_gamma0;
   cout << "SP2D::setActiveTensionParams:: g0Tau: " << g0Tau << " g0Delta: " << g0Delta << endl;
 }
 
@@ -1994,6 +2031,12 @@ void DPM2D::getActiveTensionParams(double &g0Tau_, double &g0Delta_) {
   g0Tau_ = g0Tau;
   g0Delta_ = g0Delta;
   //cout << "SP2D::getActiveTensionParams:: g0Tau: " << g0Tau_ << " g0Delta: " << g0Delta_ << endl;
+}
+
+void DPM2D::initializeTensions() { // only works in 2D
+  thrust::fill(d_gamma0.begin(), d_gamma0.end(), double(g0));
+  d_g0Rest = d_gamma0;
+  cout << "DPM2D::initializeTensions: setting d_gamma0 and d_g0Rest equal to g0" << endl;
 }
 
 void DPM2D::setSelfPropulsionParams(double driving_, double taup_) {

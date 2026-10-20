@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
+  bool initTensions = false, readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
   // input variables
   std::string inDir = argv[1], mode = argv[10];
   double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]), g0Tau = atof(argv[5]), g0Delta = atof(argv[6]);
@@ -38,8 +38,8 @@ int main(int argc, char **argv) {
   // other variables
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
-  double cutDistance, cutoff = 0.5, timeUnit = 0, diffUnit = 0, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, Pe;
+  double cutDistance, cutoff = 0.5, timeUnit = 0, gammaUnit = 0, sigma, size, waveQ;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, Pe, l0Rest = 0.1;
   std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "tension/";
   // set simulation mode
   if(mode == "change") {
@@ -91,8 +91,9 @@ int main(int argc, char **argv) {
   } else {//start a new dyanmics
     if(readAndMakeNewDir == true) {
       readState = true;
-      outDir = inDir + "../" + dirSample;
+      outDir = inDir + "../../" + dirSample;
     } else {
+      initTensions = true; // initializing from NVT
       if(std::experimental::filesystem::exists(inDir + whichDynamics) == false) {
         std::experimental::filesystem::create_directory(inDir + whichDynamics);
       }
@@ -103,8 +104,9 @@ int main(int argc, char **argv) {
   cout << "inDir: " << inDir << endl << "outDir: " << outDir << endl;
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   dpm.setEnergyCosts(ea, el, eb, ec);
-  dpm.setTension(g0, readState);
-  if(readState) ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
+  dpm.setTension(g0);
+  if(readState) ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim, false, initTensions);
+  if(initTensions) dpm.initializeTensions();
   numVertices = dpm.getNumVertices();
   // output file
   energyFile = outDir + "energy.dat";
@@ -113,16 +115,16 @@ int main(int argc, char **argv) {
   // initialize simulation
   sigma = dpm.getMeanParticleSize();
   timeUnit = sigma / sqrt(ec);
+  gammaUnit = ec / sigma;
   timeStep = dpm.setTimeStep(timeStep * timeUnit);
   cout << "Units - time: " << timeUnit << " space: " << sigma << " time step: " << timeStep << endl;
   cout << "Thermostat - damping: " << damping << " Tinject: " << Tinject << endl;
-  Pe = el * g0Delta * g0Delta / Tinject;
-  cout << "Activity - tg0: " << g0Tau << " deltag0: " << g0Delta << " Pe = kl * deltag0^2 / Tinject: " << Pe << endl;
-  cout << "Magnitudes - rest force: " << timeStep / g0Tau << " noise: " << sqrt(2. * g0Delta * timeStep);
+  Pe = g0Delta * l0Rest / el;
+  cout << "Activity - tau_g0: " << g0Tau << " delta_g0: " << g0Delta << " Pe = delta_g0 * l0 / el: " << Pe << endl;
   damping /= timeUnit;
   g0Tau *= timeUnit;
-  g0Delta *= (sigma * sigma);
-  dpm.setActiveTensionParams(g0Tau, g0Delta, readState);
+  g0Delta *= gammaUnit;
+  dpm.setActiveTensionParams(g0Tau, g0Delta);
   ioDPM.saveDriveParams(outDir, damping, Pe);
 
   // initialize integration scheme
