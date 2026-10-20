@@ -69,8 +69,8 @@ INC_DIR = include
 # run dynamics
 #EXE = runNVE
 #EXE = runNVT
-#EXE = runActive
-EXE = runTension
+EXE = runActive
+#EXE = runTension
 #EXE = runActiveShape
 #EXE = runRigidNVE
 #EXE = runRigidNVT

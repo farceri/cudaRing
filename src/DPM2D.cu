@@ -1945,17 +1945,17 @@ void DPM2D::translateAndRotateVertices() {
 }
 
 // compute particle angles from velocity
-void DPM2D::computeParticleAngleFromVel() {
+void DPM2D::initializeParticleAngles() { // only works in 2D
   long p_nDim(nDim);
   auto r = thrust::counting_iterator<long>(0);
   double* pAngle = thrust::raw_pointer_cast(&d_particleAngle[0]);
   const double* pVel = thrust::raw_pointer_cast(&d_particleVel[0]);
 
-  auto computeParticleAngle = [=] __device__ (long particleId) {
-    pAngle[particleId] = atan(pVel[particleId * p_nDim + 1] / pVel[particleId * p_nDim]);
+  auto computeAngleFromVel = [=] __device__ (long particleId) {
+    pAngle[particleId] = atan2(pVel[particleId * p_nDim + 1], pVel[particleId * p_nDim]);
   };
 
-  thrust::for_each(r, r + numParticles, computeParticleAngle);
+  thrust::for_each(r, r + numParticles, computeAngleFromVel);
 }
 
 //*************************** force and energy *******************************//
@@ -1971,9 +1971,16 @@ void DPM2D::setEnergyCosts(double ea_, double el_, double eb_, double ec_) {
 }
 
 void DPM2D::setTension(double g0_, bool readState_) {
+  // readState_ is defaulted to false so when tensionType is on and activeTension is off the gamma0 are set here
+  if(g0_ < 0) {
+    g0_ = 1;
+    cout << "DPM2D::setTension: input tension is negative, setting it to default value 1" << endl;
+  }
   g0 = g0_;
-  if(!readState_) thrust::fill(d_gamma0.begin(), d_gamma0.end(), double(g0_));
-  else cout << "DPM2D::setTension: reading state, not resetting d_gamma0" << endl;
+  if(!readState_) {
+    thrust::fill(d_gamma0.begin(), d_gamma0.end(), double(g0_));
+    cout << "DPM2D::setTension: setting d_gamma0 to input value g0_" << endl;
+  } else cout << "DPM2D::setTension: reading state, not resetting d_gamma0" << endl;
 }
 
 void DPM2D::setActiveTensionParams(double g0Tau_, double g0Delta_, bool readState_) {
@@ -2168,6 +2175,8 @@ void DPM2D::updateActiveTension() {
 
   auto integrateActiveTension = [=] __device__ (long vId) {
 		gamma0[vId] += randAngle[vId] - (gamma0[vId] - g0Rest[vId]) * s_dt / s_g0Tau;
+    // Heaviside clip: prevent negative (expansive) tension
+    gamma0[vId] = fmax(gamma0[vId], 0.0);
   };
 
   thrust::for_each(r, r + numVertices, integrateActiveTension);
@@ -2191,6 +2200,8 @@ void DPM2D::updateRestLength() {
   auto integrateRestLength = [=] __device__ (long vId) {
     //long pId = pIdList[vId];
 		l0[vId] += s_dt * (l0Vel[vId] - (l0[vId] - l0Rest[vId]) / s_l0Tau) + randAngle[vId];
+    // Heaviside clip: prevent negative rest length
+    l0[vId] = fmax(l0[vId], 0.1 * l0Rest[vId]);
   };
 
   thrust::for_each(r, r + numVertices, integrateRestLength);

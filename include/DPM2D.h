@@ -537,7 +537,7 @@ public:
 
   void translateAndRotateVertices();
 
-  void computeParticleAngleFromVel();
+  void initializeParticleAngles();
 
   // force and energy
   void setEnergyCosts(double ea_, double el_, double eb_, double ec_);

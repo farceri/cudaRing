@@ -121,7 +121,7 @@ PYBIND11_MODULE(libPyDPM, m) {
   .def("scaleParticleVelocity", &DPM2D::scaleParticleVelocity)
   .def("translateVertices", &DPM2D::translateVertices)
   .def("rotateVertices", &DPM2D::rotateVertices)
-  .def("computeParticleAngleFromVel", &DPM2D::computeParticleAngleFromVel)
+  .def("initializeParticleAngles", &DPM2D::initializeParticleAngles)
 //*************************** force and energy *******************************//
   .def("setSpringConstants", &DPM2D::setSpringConstants)
   .def("setAttractionConstants", &DPM2D::setAttractionConstants)

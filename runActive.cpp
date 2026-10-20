@@ -31,16 +31,16 @@ int main(int argc, char **argv) {
   // readAndMakeNewDir reads the input dir and makes/saves a new output dir (cool or heat packing)
   // readAndSaveSameDir reads the input dir and saves in the same input dir (thermalize packing)
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
-  bool readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
+  bool initAngles = false,readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
   // input variables
-  std::string inDir = argv[1], mode = argv[10];
+  std::string inDir = argv[1], tensionType = argv[10], mode = argv[11];
   double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]), tp = atof(argv[5]), driving = atof(argv[6]);
   long maxStep = atof(argv[7]), initialStep = atof(argv[8]), numParticles = atol(argv[9]);
   // other variables
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double cutDistance, cutoff = 0.5, timeUnit, forceUnit, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, Pe;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, Pe;
   std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "active/";
   // set simulation mode
   if(mode == "change") {
@@ -71,6 +71,10 @@ int main(int argc, char **argv) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
     dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
   }
+  if(tensionType == "tension") {
+    dpm.setTensionType(simControlStruct::tensionEnum::on);
+    cout << "Tension is ON" << endl;
+  }
 
   // set input and output
   dirSample = whichDynamics + "tp" + argv[5] + "-f0" + argv[6] + "/";
@@ -94,6 +98,7 @@ int main(int argc, char **argv) {
       readState = true;
       outDir = inDir + "../../" + dirSample;
     } else {
+      initAngles = true; // initializing from NVT
       if(std::experimental::filesystem::exists(inDir + whichDynamics) == false) {
         std::experimental::filesystem::create_directory(inDir + whichDynamics);
       }
@@ -105,9 +110,11 @@ int main(int argc, char **argv) {
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   sigma = dpm.getMeanParticleSize();
   dpm.setEnergyCosts(ea, el, eb, ec);
+  if(tensionType == "tension") dpm.setTension(g0);
   if(readState == true) {
-    ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
+    ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim, initAngles);
   }
+  if(initAngles == true) dpm.initializeParticleAngles();
   numVertices = dpm.getNumVertices();
   // output file
   energyFile = outDir + "energy.dat";

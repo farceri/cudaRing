@@ -465,20 +465,6 @@ inline __device__ double calcFENEPerimeterForceEnergy(const double tL0, const do
   	return d_el * d_stiff * d_extSq * log(1 - pLength * pLength / (d_extSq * pL0 * pL0));
 }
 
-inline __device__ double calcTensionForceEnergy(const double nGamma, const double pGamma, const double nLength, const double pLength, const double* vPos, const double* nPos, const double* pPos, double* vertexForce) {
-    // Heaviside clip: prevent negative (expansive) tension
-    auto tG = fmax(nGamma, 0.0);
-    auto pG = fmax(pGamma, 0.0);
-    // force: pulls vertex toward both neighbors, magnitude = tension (not length-dependent)
-    #pragma unroll (MAXDIM)
-    for (long dim = 0; dim < d_nDim; dim++) {
-        vertexForce[dim] += tG * (nPos[dim] - vPos[dim]) / nLength + pG * (pPos[dim] - vPos[dim]) / pLength;
-    }
-    // only the "previous" segment's energy is counted here, to avoid double-counting
-    // (the "next" segment's energy will be counted when the next vertex processes it as its "previous")
-    return (pG * pLength);
-}
-
 inline __device__ double calcBendingForceEnergy(const double* preSegment, const double* nextSegment, const double thisAngleDelta, const double nextAngleDelta, const double preAngleDelta, double* vertexForce) {
 	double preNormalSegment[MAXDIM], nextNormalSegment[MAXDIM];
 	// get normal segments
@@ -551,6 +537,20 @@ __global__ void kernelCalcShapeForceEnergy(const double* a0, const double* area,
     	energy[vertexId] = shapeEnergy;
 		//printf("\n shape: vertexId %ld \t fx: %.13e \t fy: %.13e \n", vertexId, force[vertexId*d_nDim], force[vertexId*d_nDim+1]);
 	}
+}
+
+inline __device__ double calcTensionForceEnergy(const double nGamma, const double pGamma, const double nLength, const double pLength, const double* vPos, const double* nPos, const double* pPos, double* vertexForce) {
+    // Heaviside clip: prevent negative (expansive) tension
+    auto tG = fmax(nGamma, 0.0);
+    auto pG = fmax(pGamma, 0.0);
+    // force: pulls vertex toward both neighbors, magnitude = tension (not length-dependent)
+    #pragma unroll (MAXDIM)
+    for (long dim = 0; dim < d_nDim; dim++) {
+        vertexForce[dim] += tG * (nPos[dim] - vPos[dim]) / nLength + pG * (pPos[dim] - vPos[dim]) / pLength;
+    }
+    // only the "previous" segment's energy is counted here, to avoid double-counting
+    // (the "next" segment's energy will be counted when the next vertex processes it as its "previous")
+    return (pG * pLength);
 }
 
 // this, next and previous are for vertices belonging to the same particle

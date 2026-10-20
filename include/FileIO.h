@@ -410,6 +410,7 @@ public:
     saveParams << "el" << "\t" << dpm_->el << endl;
     saveParams << "eb" << "\t" << dpm_->eb << endl;
     saveParams << "ec" << "\t" << dpm_->ec << endl;
+    if(dpm_->simControl.tensionType == simControlStruct::tensionEnum::on) saveParams << "g0" << "\t" << dpm_->g0 << endl;
     saveParams << "dt" << "\t" << dpm_->dt << endl;
     saveParams << "phi" << "\t" << dpm_->getPhi() << endl;
     saveParams << "phi0" << "\t" << dpm_->getPreferredPhi() << endl;
@@ -429,8 +430,12 @@ public:
     save1DFile(dirName + "restAngles.dat", dpm_->getRestAngles());
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
     //save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
-    //save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
-    save1DFile(dirName + "particleRad.dat", dpm_->getParticleRadii());
+    if(dpm_->simControl.particleType == simControlStruct::particleEnum::active) {
+      save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
+      save1DFile(dirName + "tensions.dat", dpm_->getTensions());
+      save1DFile(dirName + "restTensions.dat", dpm_->getRestTensions());
+    }
     save2DFile(dirName + "shapes.dat", dpm_->getParticleShapes(), 3); // 3 is for area, perimeter and shape parameter
   }
 
@@ -457,29 +462,28 @@ public:
     save1DFile(dirName + "particleAngvel.dat", dpm_->getParticleAngularVelocities());
   }
 
-  void readState(string dirName, long numParticles_, long numVertices_, long nDim_) {
+  void readState(string dirName, long numParticles_, long numVertices_, long nDim_, bool initAngles = false) {
     if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::deformable) {
-      readDeformableState(dirName, numParticles_, numVertices_, nDim_);
+      readDeformableState(dirName, numParticles_, numVertices_, nDim_, initAngles);
     } else if(dpm_->simControl.shapeType == simControlStruct::shapeEnum::rigid) {
       readRigidState(dirName, numParticles_, nDim_);
     }
   }
   
-  void readDeformableState(string dirName, long numParticles_, long numVertices_, long nDim_) {
+  void readDeformableState(string dirName, long numParticles_, long numVertices_, long nDim_, bool initAngles = false) {
     thrust::host_vector<double> vel_(numVertices_ * nDim_);
-    thrust::host_vector<double> particleAngle_(numParticles_);
     vel_ = read2DFile(dirName + "velocities.dat", numVertices_);
     dpm_->setVertexVelocities(vel_);
-    if(dpm_->simControl.tensionType == simControlStruct::tensionEnum::on) {
+    if(dpm_->simControl.particleType == simControlStruct::particleEnum::active) {
+      if(initAngles == false) {
+        thrust::host_vector<double> particleAngle_(numParticles_);
+        particleAngle_ = read1DFile(dirName + "particleAngles.dat", numParticles_);
+        dpm_->setParticleAngles(particleAngle_);
+      }
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
       thrust::host_vector<double> gamma0_(numVertices_);
       gamma0_ = read1DFile(dirName + "tensions.dat", numVertices_);
       dpm_->setTensions(gamma0_);
-    }
-    if(dpm_->simControl.particleType == simControlStruct::particleEnum::active) {
-      thrust::host_vector<double> particleAngle_(numParticles_);
-      particleAngle_ = read1DFile(dirName + "particleAngles.dat", numParticles_);
-      dpm_->setParticleAngles(particleAngle_);
-    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
       thrust::host_vector<double> g0Rest_(numVertices_);
       g0Rest_ = read1DFile(dirName + "restTensions.dat", numVertices_);
       dpm_->setRestTensions(g0Rest_);
@@ -500,12 +504,13 @@ public:
     save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
     save2DFile(dirName + "shapes.dat", dpm_->getParticleShapes(), 3); // 3 is for area, perimeter and shape parameter
     if(dpm_->simControl.tensionType == simControlStruct::tensionEnum::on) {
-      save1DFile(dirName + "tensions.dat", dpm_->getTensions());
+    save1DFile(dirName + "segments.dat", dpm_->getSegmentLengths());
     }
     if(dpm_->simControl.particleType == simControlStruct::particleEnum::active) {
       save1DFile(dirName + "particleAngles.dat", dpm_->getParticleAngles());
     } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
       save1DFile(dirName + "restTensions.dat", dpm_->getRestTensions());
+      save1DFile(dirName + "tensions.dat", dpm_->getTensions());
     }
   }
 

@@ -5,7 +5,7 @@
 // Include C++ header files
 
 // Example usage
-// ./runActiveTension /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02 <damping>=1e02 <g0Tau>=1e-01 <g0Delta>=1e02
+// ./runTension /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02 <damping>=1e02 <g0Tau>=1e-01 <g0Delta>=1e02
 // <maxStep>=1e07 <initialStep>=0 <numParticles>=256 <mode>=0
 
 #include "include/DPM2D.h"
@@ -39,8 +39,8 @@ int main(int argc, char **argv) {
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double cutDistance, cutoff = 0.5, timeUnit = 0, diffUnit = 0, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 1, Pe;
-  std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "shape/";
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, Pe;
+  std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "tension/";
   // set simulation mode
   if(mode == "change") {
     readAndMakeNewDir = true;
@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
   }
   
   // set input and output
-  dirSample = whichDynamics + "tg" + argv[5] + "-Dg" + argv[6] + "/";
+  dirSample = whichDynamics + "tg" + argv[5] + "-dg" + argv[6] + "/";
   ioDPMFile ioDPM(&dpm);
   if (readAndSaveSameDir == true) {//keep running the same dynamics
     readState = true;
