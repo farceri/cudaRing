@@ -72,6 +72,8 @@ INC_DIR = include
 #EXE = runActive
 EXE = runTension
 #EXE = runActiveShape
+#EXE = shearNVT
+#EXE = shearOscNVT
 #EXE = runRigidNVE
 #EXE = runRigidNVT
 

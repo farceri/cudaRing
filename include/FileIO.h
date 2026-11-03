@@ -22,6 +22,7 @@ public:
   ifstream inputFile;
   ofstream outputFile;
   ofstream energyFile;
+  ofstream shearFile;
   ofstream corrFile;
   DPM2D * dpm_;
 
@@ -78,6 +79,12 @@ public:
     energyFile << setprecision(precision) << etot << "\t";
     energyFile << setprecision(precision) << dpm_->getShapeCOMEnergyRatio() << "\t";
     energyFile << setprecision(precision) << dpm_->getParticleHexaticOrder() << "\t";
+    if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
+      std::tuple<double, double> rms = dpm_->getTensionComponents();
+      energyFile << setprecision(precision) << get<0>(rms) << "\t";
+      energyFile << setprecision(precision) << get<1>(rms) << "\t";
+    }
+    energyFile << setprecision(precision) << dpm_->getPressure() << "\t";
     energyFile << setprecision(precision) << dpm_->getPhi() << endl;
   }
 
@@ -91,20 +98,37 @@ public:
     energyFile << setprecision(precision) << etot << endl;
   }
 
+  void closeEnergyFile() {
+    energyFile.close();
+  }
+
+  void openShearFile(string fileName) {
+    shearFile = ofstream(fileName.c_str());
+    if (!shearFile.is_open()) {
+      cerr << "ioDPMFile::openShearFile: error: could not open input file " << fileName << endl;
+      exit(1);
+    }
+  }
+
+  void saveStressStrain(double strain, long numVertices) {
+    double shape = dpm_->getShapeShearStress();
+    double interact = dpm_->getInteractionShearStress();
+    shearFile << setprecision(precision) << strain << "\t";
+    shearFile << setprecision(precision) << shape << "\t";
+    shearFile << setprecision(precision) << interact << "\t";
+    shearFile << setprecision(precision) << shape + interact << endl;
+  }
+
+  void closeShearFile() {
+    shearFile.close();
+  }
+
   void openCorrFile(string fileName) {
     corrFile = ofstream(fileName.c_str());
     if (!corrFile.is_open()) {
       cerr << "ioDPMFile::openCorrFile: error: could not open input file " << fileName << endl;
       exit(1);
     }
-  }
-
-  void closeEnergyFile() {
-    energyFile.close();
-  }
-
-  void closeCorrFile() {
-    corrFile.close();
   }
 
   void saveCorr(long step, double timeStep) {
@@ -118,6 +142,10 @@ public:
     corrFile << setprecision(precision) << isf << "\t";
     corrFile << setprecision(precision) << visf << "\t";
     corrFile << setprecision(precision) << deltaA << endl;
+  }
+
+  void closeCorrFile() {
+    corrFile.close();
   }
 
   thrust::host_vector<double> read1DIndexFile(string fileName, long numRows) {
@@ -411,6 +439,10 @@ public:
     saveParams << "eb" << "\t" << dpm_->eb << endl;
     saveParams << "ec" << "\t" << dpm_->ec << endl;
     if(dpm_->simControl.tensionType == simControlStruct::tensionEnum::on) saveParams << "g0" << "\t" << dpm_->g0 << endl;
+    if(dpm_->simControl.potentialType == simControlStruct::potentialEnum::adhesivewca) {
+      saveParams << "eAdh" << "\t" << dpm_->eAdh << endl;
+      saveParams << "rAdh" << "\t" << dpm_->l2 << endl;
+    } 
     saveParams << "dt" << "\t" << dpm_->dt << endl;
     saveParams << "phi" << "\t" << dpm_->getPhi() << endl;
     saveParams << "phi0" << "\t" << dpm_->getPreferredPhi() << endl;
@@ -573,6 +605,15 @@ public:
       saveParams << "Dg0" << "\t" << g0Delta << endl;
       saveParams << "Pe" << "\t" << Pe << endl;
     }
+    saveParams.close();
+  }
+
+  void saveStrainInfo(string dirName, double strain, long cycleIndex) {
+    string strainParams = dirName + "strainInfo.dat";
+    ofstream saveParams(strainParams.c_str());
+    openOutputFile(strainParams);
+    saveParams << "strain" << "\t" << strain << endl;
+    saveParams << "cycle_id" << "\t" << cycleIndex << endl;
     saveParams.close();
   }
 

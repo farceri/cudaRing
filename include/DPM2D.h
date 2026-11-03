@@ -26,7 +26,7 @@ struct simControlStruct {
   enum class shapeEnum {deformable, rigid} shapeType;
   enum class tensionEnum {off, on} tensionType;
   enum class noiseEnum {langevin, baoab, brownian, drivenBrownian} noiseType;
-  enum class potentialEnum {harmonic, lennardJones, adhesive, wca} potentialType;
+  enum class potentialEnum {harmonic, lennardJones, adhesive, wca, adhesivewca} potentialType;
   enum class interactionEnum {vertexVertex, vertexSmooth, cellSmooth, all} interactionType;
   enum class neighborEnum {neighbor, cell, allToAll} neighborType;
   enum class monomerEnum {harmonic, FENE} monomerType;
@@ -86,20 +86,20 @@ public:
   double eb; // bending
   double ec; // interaction
   double g0; // tension
-  // Lees Edwards parameter
-  double LEstrain;
+  // adhesion constants
+  double l1, l2, eAdh;
   // active tension parameters
   double g0Tau, g0Delta;
   // self-propulsion parameters
   double driving, taup;
   // active shape parameters
   double l0Tau, l0Delta, kl0;
-  // attraction constants
-  double l1, l2;
   // Lennard-Jones constants
   double LJcutoff, LJecut, LJfshift;
   // FENE constants
   double stiff, extSq;
+  // Lees Edwards parameter
+  double LEstrain;
   // neighbor variables
   double cutoff, cutDistance;
   long updateCount;
@@ -138,6 +138,10 @@ public:
   thrust::device_vector<double> d_particleVelSquared;
   thrust::device_vector<double> d_psi6;
 
+  // tension components
+  thrust::device_vector<double> d_fTan;
+  thrust::device_vector<double> d_fNorm;
+
   // particle variables
   thrust::device_vector<double> d_particlePos;
   thrust::device_vector<double> d_particleRad;
@@ -164,8 +168,10 @@ public:
 	thrust::device_vector<double> d_momentOfInertia;
 
   // stress
+  thrust::device_vector<double> d_particleStress;
+  thrust::device_vector<double> d_shapeStress;
+  thrust::device_vector<double> d_intStress;
   thrust::device_vector<double> d_stress;
-  thrust::device_vector<double> d_perParticleStress;
 
   //contact list
   thrust::device_vector<long> d_contactList;
@@ -390,11 +396,7 @@ public:
   void setVertexTorques(thrust::host_vector<double> &torque_);
   thrust::host_vector<double> getVertexTorques();
 
-  thrust::host_vector<double> getPerParticleStressTensor();
-
   thrust::host_vector<double> getStressTensor();
-
-  double getPressure();
 
   double getTotalForceMagnitude();
 
@@ -498,6 +500,10 @@ public:
 
   double getAreaFluctuation();
 
+  void calcTensionComponents();
+
+  std::tuple<double, double> getTensionComponents();
+
   // initialization functions
   void setMonoSizeDistribution();
 
@@ -543,12 +549,20 @@ public:
 
   void setLEstrain(double LEstrain_);
 
-  void getLEstrain();
+  double getLEstrain();
 
-  void applyLEShear(double LEstrain_);
+  void applyLEStrain(double LEstrain_);
 
   // force and energy
   void setEnergyCosts(double ea_, double el_, double eb_, double ec_);
+
+  void setAdhesionConstants(double eAdh_, double rAdh_);
+
+  void setActiveAdhesionParams(double wTau_, double wDelta_);
+
+  void getActiveAdhesionParams(double &wTau_, double &wDelta_);
+
+  void initializeAdhesions();
 
   void setTension(double g0_);
 
@@ -566,8 +580,6 @@ public:
 
   void getActiveShapeParams(double &l0Tau_, double &l0Delta_, double &kl0_);
 
-  void setAttractionConstants(double l1_, double l2_);
-
   void setBoxEnergyCost(double ew_);
 
   void setLJcutoff(double LJcutoff_);
@@ -583,8 +595,12 @@ public:
   void calcShapeForceEnergy();
 
   void addSelfPropulsion();
+
+  void updateActiveAdhesion();
   
   void updateActiveTension();
+
+  void updateActiveTensionByBlocks();
 
   void updateRestLength();
   
@@ -596,7 +612,7 @@ public:
 
   void transferForceToParticles();
 
-  void calcVertexSmoothForceTorque();
+  void calcRigidSmoothForceTorque();
 
   void calcTorqueAndMomentOfInertia();
 
@@ -604,9 +620,19 @@ public:
 
   void calcRigidForceEnergy();
 
+  void calcDeformableStressTensor();
+
+  void calcRigidStressTensor();
+
   void calcStressTensor();
 
-  void calcPerParticleStressTensor();
+  double getPressure();
+
+  double getShearStress();
+
+  double getShapeShearStress();
+
+  double getInteractionShearStress();
 
   void calcNeighborForces();
 

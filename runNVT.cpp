@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double cutDistance, cutoff = 0.5, timeUnit = 0, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, eAdh = 0.1, Adhcut = 0.4;
   std::string outDir, energyFile, currentDir, dirSample, whichDynamics;
   // set simulation mode
   if(mode == "change") {
@@ -81,6 +81,9 @@ int main(int argc, char **argv) {
   } else if(potType == "wca") {
     dpm.setPotentialType(simControlStruct::potentialEnum::wca);
     whichDynamics = whichDynamics + "-wca";
+  } else if(potType == "adhesive") {
+    dpm.setPotentialType(simControlStruct::potentialEnum::adhesivewca);
+    whichDynamics = whichDynamics + "-adh";
   } else {
     cout << "Setting default harmonic potential" << endl;
   }
@@ -130,6 +133,7 @@ int main(int argc, char **argv) {
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   dpm.setEnergyCosts(ea, el, eb, ec);
   if(tensionType == "tension") dpm.setTension(g0);
+  if(potType == "adhesive") dpm.setAdhesionConstants(eAdh, Adhcut);
   if(readState == true) {
     ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
   }

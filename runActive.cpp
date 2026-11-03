@@ -33,14 +33,14 @@ int main(int argc, char **argv) {
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
   bool initAngles = false, readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
   // input variables
-  std::string inDir = argv[1], tensionType = argv[10], mode = argv[11];
+  std::string inDir = argv[1], tensionType = argv[10], adhesionType = argv[11], mode = argv[12];
   double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]), tp = atof(argv[5]), driving = atof(argv[6]);
   long maxStep = atof(argv[7]), initialStep = atof(argv[8]), numParticles = atol(argv[9]);
   // other variables
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double cutDistance, cutoff = 0.5, timeUnit, forceUnit, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, Pe;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, Pe, eAdh = 0.1, Adhcut = 0.4;
   std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "active/";
   // set simulation mode
   if(mode == "change") {
@@ -66,7 +66,8 @@ int main(int argc, char **argv) {
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
   dpm.setParticleType(simControlStruct::particleEnum::active);
   dpm.setNoiseType(simControlStruct::noiseEnum::langevin);
-  dpm.setPotentialType(simControlStruct::potentialEnum::wca);
+  if(adhesionType == "adhesion") dpm.setPotentialType(simControlStruct::potentialEnum::adhesivewca);
+  else dpm.setPotentialType(simControlStruct::potentialEnum::wca);
   if(smooth) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
     dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);

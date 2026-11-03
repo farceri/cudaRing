@@ -150,6 +150,7 @@ void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
     case simControlStruct::particleEnum::activeTension:
     d_g0Rest.resize(numVertices_);
     d_randAngle.resize(numVertices_);
+    //d_randAngle.resize(numParticles_);
     thrust::fill(d_g0Rest.begin(), d_g0Rest.end(), double(0));
     thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
     break;
@@ -176,13 +177,17 @@ void DPM2D::initDynamicalVariables(long numVertices_) {
   d_vel.resize(numVertices_ * nDim);
   d_force.resize(numVertices_ * nDim);
   d_energy.resize(numVertices_);
-  d_disp.resize(numVertices_);
-  d_lastPos.resize(numVertices_ * nDim);
-  d_velSquared.resize(numVertices_ * nDim);
+  d_shapeStress.resize(numVertices_ * nDim * nDim); // ToDo: initialize only when shapeType is deformable
+  d_intStress.resize(numVertices_ * nDim * nDim);
   thrust::fill(d_pos.begin(), d_pos.end(), double(0));
   thrust::fill(d_vel.begin(), d_vel.end(), double(0));
   thrust::fill(d_force.begin(), d_force.end(), double(0));
   thrust::fill(d_energy.begin(), d_energy.end(), double(0));
+  thrust::fill(d_shapeStress.begin(), d_shapeStress.end(), double(0));
+  thrust::fill(d_intStress.begin(), d_intStress.end(), double(0));
+  d_disp.resize(numVertices_);
+  d_lastPos.resize(numVertices_ * nDim);
+  d_velSquared.resize(numVertices_ * nDim);
   thrust::fill(d_disp.begin(), d_disp.end(), double(0));
   thrust::fill(d_lastPos.begin(), d_lastPos.end(), double(0));
   thrust::fill(d_velSquared.begin(), d_velSquared.end(), double(0));
@@ -206,13 +211,15 @@ void DPM2D::initParticleVariables(long numParticles_) {
   d_particleVel.resize(numParticles_ * nDim);
   d_particleForce.resize(numParticles_ * nDim);
   d_particleEnergy.resize(numParticles_);
+  d_particleStress.resize(numParticles_ * nDim * nDim);
+  thrust::fill(d_particleVel.begin(), d_particleVel.end(), double(0));
+  thrust::fill(d_particleForce.begin(), d_particleForce.end(), double(0));
+  thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
+  thrust::fill(d_particleStress.begin(), d_particleStress.end(), double(0));
   d_particleDisp.resize(numParticles_);
   d_particleLastPos.resize(numParticles_ * nDim);
   d_particleVelSquared.resize(numParticles_ * nDim);
   d_psi6.resize(numParticles_);
-  thrust::fill(d_particleVel.begin(), d_particleVel.end(), double(0));
-  thrust::fill(d_particleForce.begin(), d_particleForce.end(), double(0));
-  thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
   thrust::fill(d_particleDisp.begin(), d_particleDisp.end(), double(0));
   thrust::fill(d_particleLastPos.begin(), d_particleLastPos.end(), double(0));
   thrust::fill(d_particleVelSquared.begin(), d_particleVelSquared.end(), double(0));
@@ -372,23 +379,23 @@ simControlStruct::simulationEnum DPM2D::getSimulationType() {
 void DPM2D::setGeometryType(simControlStruct::geometryEnum geometryType_) {
 	simControl.geometryType = geometryType_;
   if(simControl.geometryType == simControlStruct::geometryEnum::normal) {
-    cout << "SP2D::setGeometryType: geometryType: normal" << endl;
+    cout << "DPM2D::setGeometryType: geometryType: normal" << endl;
   } else if(simControl.geometryType == simControlStruct::geometryEnum::fixedBox) {
     d_wallForce.resize(numVertices * nDim);
     thrust::fill(d_wallForce.begin(), d_wallForce.end(), double(0));
-    cout << "SP2D::setGeometryType: geometryType: fixedBox" << endl;
+    cout << "DPM2D::setGeometryType: geometryType: fixedBox" << endl;
   } else if(simControl.geometryType == simControlStruct::geometryEnum::fixedSides) {
     d_wallForce.resize(numVertices * nDim);
     thrust::fill(d_wallForce.begin(), d_wallForce.end(), double(0));
-    cout << "SP2D:;setGeometryType: geometryType: fixedSides" << endl;
+    cout << "DPM2D:;setGeometryType: geometryType: fixedSides" << endl;
   } else if(simControl.geometryType == simControlStruct::geometryEnum::roundBox) {
     d_wallForce.resize(numVertices * nDim);
     thrust::fill(d_wallForce.begin(), d_wallForce.end(), double(0));
-    cout << "SP2D::setGeometryType: geometryType: roundBox" << endl;
+    cout << "DPM2D::setGeometryType: geometryType: roundBox" << endl;
   } else if(simControl.geometryType == simControlStruct::geometryEnum::leesEdwards) {
-    cout << "SP2D::setGeometryType: geometryType: leesEdwards" << endl;
+    cout << "DPM2D::setGeometryType: geometryType: leesEdwards" << endl;
   } else {
-    cout << "SP2D::setGeometryType: please specify valid geometryType: normal, fixedBox, fixedSides, roundBox and leesEdwards" << endl;
+    cout << "DPM2D::setGeometryType: please specify valid geometryType: normal, fixedBox, fixedSides, roundBox and leesEdwards" << endl;
   }
 	syncSimControlToDevice();
 }
@@ -486,8 +493,10 @@ void DPM2D::setPotentialType(simControlStruct::potentialEnum potentialType_) {
     cout << "DPM2D::setPotentialType: potentialType: adhesive" << endl;
   } else if(simControl.potentialType == simControlStruct::potentialEnum::wca) {
     cout << "DPM2D::setPotentialType: potentialType: wca" << endl;
-  } else {
-    cout << "DPM2D::setPotentialType: please specify valid potentialType: normal or lennardJones" << endl;
+  } else if(simControl.potentialType == simControlStruct::potentialEnum::adhesivewca) {
+    cout << "DPM2D::setPotentialType: potentialType: adhesivewca" << endl;
+  }else {
+    cout << "DPM2D::setPotentialType: please specify valid potentialType: harmonic, lennardJones, adhesive, wca or adhesivewca" << endl;
   }
 	syncSimControlToDevice();
 }
@@ -1027,27 +1036,11 @@ thrust::host_vector<double> DPM2D::getVertexTorques() {
   return torqueFromDevice;
 }
 
-thrust::host_vector<double> DPM2D::getPerParticleStressTensor() {
-  calcPerParticleStressTensor();
-  thrust::host_vector<double> perParticleStressFromDevice;
-  perParticleStressFromDevice = d_perParticleStress;
-  return perParticleStressFromDevice;
-}
-
 thrust::host_vector<double> DPM2D::getStressTensor() {
   calcStressTensor();
   thrust::host_vector<double> stressFromDevice;
   stressFromDevice = d_stress;
   return stressFromDevice;
-}
-
-double DPM2D::getPressure() {
-  calcStressTensor();
-  double pressure = 0;
-  for (long dim = 0; dim < nDim; dim++) {
-    pressure += d_stress[dim * nDim + dim];
-  }
-  return pressure / (nDim * numVertices);
 }
 
 // return the sum of force magnitudes
@@ -1263,7 +1256,7 @@ void DPM2D::adjustTemperature(double targetTemp) {
     }
   };
 
-  //cout << "SP2D::adjustTemperature:: scale: " << scale << endl;
+  //cout << "DPM2D::adjustTemperature:: scale: " << scale << endl;
   thrust::for_each(r, r + numVertices, adjustVertexTemp);
 }
 
@@ -1377,6 +1370,9 @@ double DPM2D::setDisplacementCutoff(double cutoff_, double size_) {
     cutDistance = WCAcut;
     break;
     case simControlStruct::potentialEnum::adhesive:
+    cutDistance = 1 + l2;
+    break;
+    case simControlStruct::potentialEnum::adhesivewca:
     cutDistance = 1 + l2;
     break;
   }
@@ -1605,6 +1601,22 @@ double DPM2D::getAreaFluctuation() {
   thrust::transform(d_area.begin(), d_area.end(), d_a0.begin(), deltaA.begin(), thrust::minus<double>());
   thrust::transform(deltaA.begin(), deltaA.end(), deltaASq.begin(), square());
   return sqrt(thrust::reduce(deltaASq.begin(), deltaASq.end(), double(0), thrust::plus<double>()) / numParticles);
+}
+
+void DPM2D::calcTensionComponents() {
+  const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
+	const double *gamma0 = thrust::raw_pointer_cast(&d_gamma0[0]);
+	const double *g0Rest = thrust::raw_pointer_cast(&d_g0Rest[0]);
+	double *fTan = thrust::raw_pointer_cast(&d_fTan[0]);
+	double *fNorm = thrust::raw_pointer_cast(&d_fNorm[0]);
+  kernelCalcTensionComponents<<<dimGrid, dimBlock>>>(pos, gamma0, g0Rest, fTan, fNorm);
+}
+
+std::tuple<double, double> DPM2D::getTensionComponents() {
+  calcTensionComponents();
+  double rmsT = sqrt(thrust::inner_product(d_fTan.begin(), d_fTan.end(), d_fTan.begin(), 0.0) / numVertices);
+  double rmsN = sqrt(thrust::inner_product(d_fNorm.begin(), d_fNorm.end(), d_fNorm.begin(), 0.0) / numVertices);
+  return std::make_tuple(rmsT, rmsN);
 }
 
 //************************ initilization functions ***************************//
@@ -1972,7 +1984,7 @@ void DPM2D::setLEstrain(double LEstrain_) {
 	else {
 		cout << "DPM2D::setLEstrain: attempting to set LEstrain without using LE boundary conditions" << endl;
 	}
-  cout << "DPM2D::setLEstrain: LEstrain: " << LEstrain << endl;
+  //cout << "DPM2D::setLEstrain: LEstrain: " << LEstrain << endl;
 }
 
 double DPM2D::getLEstrain() {
@@ -1984,7 +1996,7 @@ double DPM2D::getLEstrain() {
 	return LEstrainFromDevice;
 }
 
-void DPM2D::applyLEShear(double LEstrain_) {
+void DPM2D::applyLEStrain(double LEstrain_) {
   long s_nDim(nDim);
 	auto r = thrust::counting_iterator<long>(0);
 	double *pos = thrust::raw_pointer_cast(&d_pos[0]);
@@ -2024,13 +2036,18 @@ void DPM2D::setTension(double g0_) {
 void DPM2D::setActiveTensionParams(double g0Tau_, double g0Delta_) {
   g0Tau = g0Tau_;
   g0Delta = g0Delta_;
-  cout << "SP2D::setActiveTensionParams:: g0Tau: " << g0Tau << " g0Delta: " << g0Delta << endl;
+  cout << "DPM2D::setActiveTensionParams:: g0Tau: " << g0Tau << " g0Delta: " << g0Delta << endl;
+  d_fTan.resize(numVertices);
+  d_fNorm.resize(numVertices);
+  thrust::fill(d_fTan.begin(), d_fTan.end(), double(0));
+  thrust::fill(d_fNorm.begin(), d_fNorm.end(), double(0));
+  cout << "INITIALIZED d_fTan AND d_fNorm" << endl;
 }
 
 void DPM2D::getActiveTensionParams(double &g0Tau_, double &g0Delta_) {
   g0Tau_ = g0Tau;
   g0Delta_ = g0Delta;
-  //cout << "SP2D::getActiveTensionParams:: g0Tau: " << g0Tau_ << " g0Delta: " << g0Delta_ << endl;
+  //cout << "DPM2D::getActiveTensionParams:: g0Tau: " << g0Tau_ << " g0Delta: " << g0Delta_ << endl;
 }
 
 void DPM2D::initializeTensions() { // only works in 2D
@@ -2042,13 +2059,13 @@ void DPM2D::initializeTensions() { // only works in 2D
 void DPM2D::setSelfPropulsionParams(double driving_, double taup_) {
   driving = driving_;
   taup = taup_;
-  //cout << "SP2D::setSelfPropulsionParams:: driving: " << driving << " taup: " << taup << endl;
+  //cout << "DPM2D::setSelfPropulsionParams:: driving: " << driving << " taup: " << taup << endl;
 }
 
 void DPM2D::getSelfPropulsionParams(double &driving_, double &taup_) {
   driving_ = driving;
   taup_ = taup;
-  //cout << "SP2D::getSelfPropulsionParams:: driving: " << driving_ << " taup: " << taup_ << endl;
+  //cout << "DPM2D::getSelfPropulsionParams:: driving: " << driving_ << " taup: " << taup_ << endl;
 }
 
 void DPM2D::setActiveShapeParams(double l0Tau_, double l0Delta_, double kl0_) {
@@ -2058,14 +2075,14 @@ void DPM2D::setActiveShapeParams(double l0Tau_, double l0Delta_, double kl0_) {
   cudaMemcpyToSymbol(d_kl0, &kl0, sizeof(kl0));
   // set rest lengths to current rest lengths
   d_l0Rest = d_l0; // this works only when initializing the system, TODO: make function to save and read l0Rest
-  cout << "SP2D::setActiveShapeParams:: l0Tau: " << l0Tau << " l0Delta: " << l0Delta << " kl0: " << kl0 << endl;
+  cout << "DPM2D::setActiveShapeParams:: l0Tau: " << l0Tau << " l0Delta: " << l0Delta << " kl0: " << kl0 << endl;
 }
 
 void DPM2D::getActiveShapeParams(double &l0Tau_, double &l0Delta_, double &kl0_) {//, double &l0Scale_) {
   l0Tau_ = l0Tau;
   l0Delta_ = l0Delta;
   kl0_ = kl0;
-  //cout << "SP2D::getActiveShapeParams:: l0Tau: " << l0Tau_ << " l0Delta: " << l0Delta_ << " l0Scale: " << l0Scale_ << endl;
+  //cout << "DPM2D::getActiveShapeParams:: l0Tau: " << l0Tau_ << " l0Delta: " << l0Delta_ << " l0Scale: " << l0Scale_ << endl;
 }
 
 void DPM2D::setBoxEnergyCost(double ew_) {
@@ -2073,11 +2090,16 @@ void DPM2D::setBoxEnergyCost(double ew_) {
   cudaMemcpyToSymbol(d_ew, &ew, sizeof(ew));
 }
 
-void DPM2D::setAttractionConstants(double l1_, double l2_) {
-  l1 = l1_;
-  l2 = l2_;
+void DPM2D::setAdhesionConstants(double eAdh_, double rAdh_) {
+  eAdh = eAdh_;
+  l2 = rAdh_;
+  // compute l1 by imposing symmetric triangle attractive potential
+  l1 = (WCAcut + (1 + l2))/2 - 1;
   cudaMemcpyToSymbol(d_l1, &l1, sizeof(l1));
   cudaMemcpyToSymbol(d_l2, &l2, sizeof(l2));
+  cudaMemcpyToSymbol(d_eAdh, &eAdh, sizeof(eAdh));
+  cout << "DPM2D::setAdhesionConstants::eAdh: " << eAdh << " potential goes to zero at: " << l2 << " starts at: " << l1;
+  cout << " and is minimum at: " << (l2 - l1)/2 << endl;
 }
 
 void DPM2D::setLJcutoff(double LJcutoff_) {
@@ -2149,14 +2171,14 @@ void DPM2D::calcShapeForceEnergy() {
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
 	double *force = thrust::raw_pointer_cast(&d_force[0]);
 	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
-  kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, theta, pos, force, energy);
+	double *shapeStress = thrust::raw_pointer_cast(&d_shapeStress[0]);
   // compute shape force
   switch (simControl.tensionType) {
     case simControlStruct::tensionEnum::off:
-    kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, theta, pos, force, energy);
+    kernelCalcShapeForceEnergy<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, theta, pos, force, energy, shapeStress);
     break;
     case simControlStruct::tensionEnum::on:
-    kernelCalcShapeForceEnergyTension<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, gamma0, theta, pos, force, energy);
+    kernelCalcShapeForceEnergyTension<<<dimGrid, dimBlock>>>(a0, area, particlePos, l0, theta0, gamma0, theta, pos, force, energy, shapeStress);
     break;
   }
 }
@@ -2212,12 +2234,48 @@ void DPM2D::updateActiveTension() {
   auto r = thrust::counting_iterator<long>(0);
   thrust::counting_iterator<long> index_sequence_begin(lrand48());
   thrust::transform(index_sequence_begin, index_sequence_begin + numVertices, d_randAngle.begin(), gaussNum(0.f,s_g0Noise));
+  //thrust::transform(index_sequence_begin, index_sequence_begin + numParticles, d_randAngle.begin(), gaussNum(0.f,s_g0Noise));
   double *gamma0 = thrust::raw_pointer_cast(&d_gamma0[0]);
   const double *g0Rest = thrust::raw_pointer_cast(&d_g0Rest[0]);
   const double *randAngle = thrust::raw_pointer_cast(&d_randAngle[0]);
+  //const long *pIdList = thrust::raw_pointer_cast(&d_particleIdList[0]);
 
   auto integrateActiveTension = [=] __device__ (long vId) {
+    //long pId = pIdList[vId];
 		gamma0[vId] += randAngle[vId] - (gamma0[vId] - g0Rest[vId]) * s_dt / s_g0Tau;
+    // Heaviside clip: prevent negative (expansive) tension
+    gamma0[vId] = fmax(gamma0[vId], 0.0);
+  };
+
+  thrust::for_each(r, r + numVertices, integrateActiveTension);
+}
+
+void DPM2D::updateActiveTensionByBlocks() {
+  double s_dt(dt);
+  double s_g0Tau(g0Tau);
+  double s_g0Noise(g0Delta * sqrt(2. * dt / g0Tau));
+  long s_nBlocks(6);   // blocks per cell: 1 = cell-level tension, >= numVertexInParticle = per-vertex
+  auto r = thrust::counting_iterator<long>(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
+  // one independent draw per vertex index; only one draw per block is actually used
+  thrust::transform(index_sequence_begin, index_sequence_begin + numVertices, d_randAngle.begin(), gaussNum(0.f, s_g0Noise));
+  double *gamma0 = thrust::raw_pointer_cast(&d_gamma0[0]);
+  const double *g0Rest = thrust::raw_pointer_cast(&d_g0Rest[0]);
+  const double *randAngle = thrust::raw_pointer_cast(&d_randAngle[0]);
+  const long *pIdList = thrust::raw_pointer_cast(&d_particleIdList[0]);
+  const long *firstId = thrust::raw_pointer_cast(&d_firstVertexInParticleId[0]);
+  const long *numInParticle = thrust::raw_pointer_cast(&d_numVertexInParticleList[0]);
+
+  auto integrateActiveTension = [=] __device__ (long vId) {
+    long pId = pIdList[vId];
+    long first = firstId[pId];
+    long nv = numInParticle[pId];
+    long nb = (s_nBlocks < nv) ? s_nBlocks : nv;   // never more blocks than vertices
+    long local = vId - first;
+    long block = (local * nb) / nv;                // block index in [0, nb)
+    // all vertices of a block read the same noise value: the draw at index first + block
+    double noise = randAngle[first + block];
+    gamma0[vId] += noise - (gamma0[vId] - g0Rest[vId]) * s_dt / s_g0Tau;
     // Heaviside clip: prevent negative (expansive) tension
     gamma0[vId] = fmax(gamma0[vId], 0.0);
   };
@@ -2262,20 +2320,22 @@ void DPM2D::calcForceEnergyGPU() {
   const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
 	double *force = thrust::raw_pointer_cast(&d_force[0]);
 	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
+  thrust::fill(d_intStress.begin(), d_intStress.end(), double(0));
+  double *intStress = thrust::raw_pointer_cast(&d_intStress[0]);
   thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
   double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
   switch (simControl.interactionType) {
     case simControlStruct::interactionEnum::vertexVertex:
-    kernelCalcVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy);
+    kernelCalcVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy, intStress);
     break;
     case simControlStruct::interactionEnum::vertexSmooth:
-    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy);
+    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy, intStress);
     break;
     case simControlStruct::interactionEnum::all:
-    kernelCalcAllToAllVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy);
+    kernelCalcAllToAllVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, energy, intStress);
     break;
     default:
-    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy);
+    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy, intStress);
     break;
   }
   switch (simControl.particleType) {
@@ -2288,6 +2348,7 @@ void DPM2D::calcForceEnergyGPU() {
     break;
     case simControlStruct::particleEnum::activeTension:
     updateActiveTension();
+    //updateActiveTensionByBlocks();
     break;
     default:
     break;
@@ -2315,11 +2376,13 @@ void DPM2D::calcVertexForceTorque() {
   double *force = thrust::raw_pointer_cast(&d_force[0]);
   double *torque = thrust::raw_pointer_cast(&d_torque[0]);
 	double *energy = thrust::raw_pointer_cast(&d_energy[0]);
+  thrust::fill(d_intStress.begin(), d_intStress.end(), double(0));
+  double *intStress = thrust::raw_pointer_cast(&d_intStress[0]);
   // torque here is used for angular acceleration
-  kernelCalcVertexForceTorque<<<dimGrid, dimBlock>>>(rad, pos, particlePos, force, torque, energy);
+  kernelCalcVertexForceTorque<<<dimGrid, dimBlock>>>(rad, pos, particlePos, force, torque, energy, intStress);
 }
 
-void DPM2D::calcVertexSmoothForceTorque() {
+void DPM2D::calcRigidSmoothForceTorque() {
   thrust::fill(d_force.begin(), d_force.end(), double(0));
   thrust::fill(d_particleEnergy.begin(), d_particleEnergy.end(), double(0));
   const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
@@ -2327,7 +2390,9 @@ void DPM2D::calcVertexSmoothForceTorque() {
   const double *particlePos = thrust::raw_pointer_cast(&d_particlePos[0]);
   double *force = thrust::raw_pointer_cast(&d_force[0]);
 	double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
-  kernelCalcVertexSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy);
+  thrust::fill(d_intStress.begin(), d_intStress.end(), double(0));
+  double *intStress = thrust::raw_pointer_cast(&d_intStress[0]);
+  kernelCalcRigidSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, force, pEnergy, intStress);
 }
 
 void DPM2D::calcRigidForceEnergy() {
@@ -2338,7 +2403,7 @@ void DPM2D::calcRigidForceEnergy() {
     transferForceToParticles();
     break;
     case simControlStruct::interactionEnum::vertexSmooth:
-    calcVertexSmoothForceTorque();
+    calcRigidSmoothForceTorque();
     transferSmoothForceToParticles();
     break;
     default:
@@ -2383,23 +2448,77 @@ void DPM2D::transferSmoothForceToParticles() {
   kernelCalcParticleSmoothRigidForceEnergy<<<dimGrid, dimBlock>>>(force, torque, momentOfInertia, pForce, pTorque);
 }
 
-void DPM2D::calcStressTensor() {
-  calcPerParticleStressTensor();
-  thrust::fill(d_stress.begin(), d_stress.end(), double(0));
-  const double *perPStress = thrust::raw_pointer_cast(&d_perParticleStress[0]);
-	double *stress = thrust::raw_pointer_cast(&d_stress[0]);
-  kernelCalcStressTensor<<<partDimGrid, dimBlock>>>(perPStress, stress);
+void DPM2D::calcDeformableStressTensor() {
+  // first sum interaction stress
+  typedef thrust::device_vector<double>::iterator Iterator;
+  strided_range<Iterator> intStress0(d_intStress.begin(), d_intStress.end(), 4);
+  strided_range<Iterator> intStress1(d_intStress.begin() + 1, d_intStress.end(), 4);
+  strided_range<Iterator> intStress2(d_intStress.begin() + 2, d_intStress.end(), 4);
+  strided_range<Iterator> intStress3(d_intStress.begin() + 3, d_intStress.end(), 4);
+  d_stress[0] = thrust::reduce(intStress0.begin(), intStress0.end(), double(0), thrust::plus<double>());
+  d_stress[1] = thrust::reduce(intStress1.begin(), intStress1.end(), double(0), thrust::plus<double>());
+  d_stress[2] = thrust::reduce(intStress2.begin(), intStress2.end(), double(0), thrust::plus<double>());
+  d_stress[3] = thrust::reduce(intStress3.begin(), intStress3.end(), double(0), thrust::plus<double>());
+  // then add shape stress
+  strided_range<Iterator> shapeStress0(d_shapeStress.begin(), d_shapeStress.end(), 4);
+  strided_range<Iterator> shapeStress1(d_shapeStress.begin() + 1, d_shapeStress.end(), 4);
+  strided_range<Iterator> shapeStress2(d_shapeStress.begin() + 2, d_shapeStress.end(), 4);
+  strided_range<Iterator> shapeStress3(d_shapeStress.begin() + 3, d_shapeStress.end(), 4);
+  d_stress[0] += thrust::reduce(shapeStress0.begin(), shapeStress0.end(), double(0), thrust::plus<double>());
+  d_stress[1] += thrust::reduce(shapeStress1.begin(), shapeStress1.end(), double(0), thrust::plus<double>());
+  d_stress[2] += thrust::reduce(shapeStress2.begin(), shapeStress2.end(), double(0), thrust::plus<double>());
+  d_stress[3] += thrust::reduce(shapeStress3.begin(), shapeStress3.end(), double(0), thrust::plus<double>());
 }
 
-void DPM2D::calcPerParticleStressTensor() {
-  d_perParticleStress.resize(numParticles * nDim * nDim);
-  thrust::fill(d_perParticleStress.begin(), d_perParticleStress.end(), double(0));
-  thrust::fill(d_stress.begin(), d_stress.end(), double(0));
-  const double *rad = thrust::raw_pointer_cast(&d_rad[0]);
-	const double *pos = thrust::raw_pointer_cast(&d_pos[0]);
-	const double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
-	double *perPStress = thrust::raw_pointer_cast(&d_perParticleStress[0]);
-  kernelCalcPerParticleStressTensor<<<partDimGrid, dimBlock>>>(rad, pos, pPos, perPStress);
+void DPM2D::calcRigidStressTensor() {
+  typedef thrust::device_vector<double>::iterator Iterator;
+  strided_range<Iterator> intStress0(d_intStress.begin(), d_intStress.end(), 4);
+  strided_range<Iterator> intStress1(d_intStress.begin() + 1, d_intStress.end(), 4);
+  strided_range<Iterator> intStress2(d_intStress.begin() + 2, d_intStress.end(), 4);
+  strided_range<Iterator> intStress3(d_intStress.begin() + 3, d_intStress.end(), 4);
+  d_stress[0] = thrust::reduce(intStress0.begin(), intStress0.end(), double(0), thrust::plus<double>());
+  d_stress[1] = thrust::reduce(intStress1.begin(), intStress1.end(), double(0), thrust::plus<double>());
+  d_stress[2] = thrust::reduce(intStress2.begin(), intStress2.end(), double(0), thrust::plus<double>());
+  d_stress[3] = thrust::reduce(intStress3.begin(), intStress3.end(), double(0), thrust::plus<double>());
+}
+
+void DPM2D::calcStressTensor() {
+  switch (simControl.shapeType) {
+    case simControlStruct::shapeEnum::deformable:
+    calcDeformableStressTensor();
+    break;
+    default:
+    calcRigidStressTensor();
+    break;
+  }
+}
+
+double DPM2D::getPressure() {
+  calcStressTensor();
+  return (d_stress[0] + d_stress[3] + 2. * getKineticEnergy()) / (nDim * d_boxSize[0] * d_boxSize[1]);
+}
+
+double DPM2D::getShearStress() {
+  calcStressTensor();
+  return -0.5 * (d_stress[1] + d_stress[2]) / (d_boxSize[0] * d_boxSize[1]);
+}
+
+double DPM2D::getShapeShearStress() {
+  typedef thrust::device_vector<double>::iterator Iterator;
+  strided_range<Iterator> shapeStress1(d_shapeStress.begin() + 1, d_shapeStress.end(), 4);
+  strided_range<Iterator> shapeStress2(d_shapeStress.begin() + 2, d_shapeStress.end(), 4);
+  double stress_xy = thrust::reduce(shapeStress1.begin(), shapeStress1.end(), double(0), thrust::plus<double>());
+  double stress_yx = thrust::reduce(shapeStress2.begin(), shapeStress2.end(), double(0), thrust::plus<double>());
+  return -0.5 * (stress_xy + stress_yx) / (d_boxSize[0] * d_boxSize[1]);
+}
+
+double DPM2D::getInteractionShearStress() {
+  typedef thrust::device_vector<double>::iterator Iterator;
+  strided_range<Iterator> intStress1(d_intStress.begin() + 1, d_intStress.end(), 4);
+  strided_range<Iterator> intStress2(d_intStress.begin() + 2, d_intStress.end(), 4);
+  double stress_xy = thrust::reduce(intStress1.begin(), intStress1.end(), double(0), thrust::plus<double>());
+  double stress_yx = thrust::reduce(intStress2.begin(), intStress2.end(), double(0), thrust::plus<double>());
+  return -0.5 * (stress_xy + stress_yx) / (d_boxSize[0] * d_boxSize[1]);
 }
 
 void DPM2D::calcNeighborForces() {
@@ -2435,19 +2554,20 @@ thrust::host_vector<double> DPM2D::getInteractionForcesGPU() {
 	double *interaction = thrust::raw_pointer_cast(&d_interaction[0]);
 	double *interEnergy = thrust::raw_pointer_cast(&d_interEnergy[0]);
   double *interPEnergy = thrust::raw_pointer_cast(&d_interParticleEnergy[0]);
+  double *intStress = thrust::raw_pointer_cast(&d_intStress[0]);
   // compute interaction
   switch (simControl.interactionType) {
     case simControlStruct::interactionEnum::vertexVertex:
-    kernelCalcVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy);
+    kernelCalcVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy, intStress);
     break;
     case simControlStruct::interactionEnum::vertexSmooth:
-    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy);
+    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy, intStress);
     break;
     case simControlStruct::interactionEnum::all:
-    kernelCalcAllToAllVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy);
+    kernelCalcAllToAllVertexInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy, intStress);
     break;
     default:
-    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy);
+    kernelCalcSmoothInteraction<<<dimGrid, dimBlock>>>(rad, pos, interaction, interPEnergy, intStress);
     break;
   }
   thrust::host_vector<double> interactionFromDevice;
@@ -2456,8 +2576,8 @@ thrust::host_vector<double> DPM2D::getInteractionForcesGPU() {
 }
 
 
-// Serial and parallel (OpenMP) CPU versions of force and energy calculations for testing and debugging
-void DPM2D::calcForceEnergyCPU() {
+// Serial and parallel (OMP) C++ versions of force and energy calculations for testing and debugging
+void DPM2D::calcForceEnergyCPU() { // ToDo: need to add stress to interaction functions
   calcShapeForceEnergy();
   switch (simControl.interactionType) {
     case simControlStruct::interactionEnum::vertexVertex:
@@ -2473,7 +2593,7 @@ void DPM2D::calcForceEnergyCPU() {
   }
 }
 
-void DPM2D::calcForceEnergyOMP() {
+void DPM2D::calcForceEnergyOMP() { // ToDo: need to add stress to interaction functions
   calcShapeForceEnergy();
   switch (simControl.interactionType) {
     case simControlStruct::interactionEnum::vertexVertex:
@@ -3790,7 +3910,8 @@ void DPM2D::calcParticleInteraction() {
 	const double *pPos = thrust::raw_pointer_cast(&d_particlePos[0]);
 	double *pForce = thrust::raw_pointer_cast(&d_particleForce[0]);
 	double *pEnergy = thrust::raw_pointer_cast(&d_particleEnergy[0]);
-  kernelCalcParticleInteraction<<<dimGrid, dimBlock>>>(pRad, pPos, pForce, pEnergy);
+	double *pStress = thrust::raw_pointer_cast(&d_particleStress[0]);
+  kernelCalcParticleInteraction<<<dimGrid, dimBlock>>>(pRad, pPos, pForce, pEnergy, pStress);
 }
 
 void DPM2D::calcParticleFixedWallInteraction() {
@@ -3924,7 +4045,7 @@ void DPM2D::initLangevin(double Temp, double gamma, bool readState) {
     this->sim_->noise = sqrt(2. * Temp * gamma / dt);
     this->sim_->d_rand.resize(numParticles * nDim);
     thrust::fill(this->sim_->d_rand.begin(), this->sim_->d_rand.end(), double(0));
-    cout << "SP2D::initLangevin:: Langevin integrator,";
+    cout << "DPM2D::initLangevin:: Langevin integrator,";
     break;
     case simControlStruct::noiseEnum::baoab:
     this->sim_ = new BAOAB(this, SimConfig(Temp));
@@ -3932,7 +4053,7 @@ void DPM2D::initLangevin(double Temp, double gamma, bool readState) {
     this->sim_->noise = sqrt(1 - exp(-2 * gamma * dt)) * sqrt(Temp);
     this->sim_->d_rand.resize(numParticles * nDim);
     thrust::fill(this->sim_->d_rand.begin(), this->sim_->d_rand.end(), double(0));
-    cout << "SP2D::initLangevin:: BAOAB integrator,";
+    cout << "DPM2D::initLangevin:: BAOAB integrator,";
     break;
     case simControlStruct::noiseEnum::brownian:
     this->sim_ = new Brownian(this, SimConfig(Temp));
@@ -3940,13 +4061,13 @@ void DPM2D::initLangevin(double Temp, double gamma, bool readState) {
     this->sim_->noise = sqrt(2. * Temp * gamma / dt);
     this->sim_->d_rand.resize(numParticles * nDim);
     thrust::fill(this->sim_->d_rand.begin(), this->sim_->d_rand.end(), double(0));
-    cout << "SP2D::initLangevin:: Brownian integrator, gamma: " << this->sim_->gamma << " noise: " << this->sim_->noise << ",";
+    cout << "DPM2D::initLangevin:: Brownian integrator, gamma: " << this->sim_->gamma << " noise: " << this->sim_->noise << ",";
     break;
     case simControlStruct::noiseEnum::drivenBrownian:
     this->sim_ = new DrivenBrownian(this, SimConfig(Temp));
     this->sim_->gamma = gamma;
     this->sim_->noise = sqrt(2. * Temp * gamma / dt);
-    cout << "SP2D::initLangevin:: Driven Brownian integrator,";
+    cout << "DPM2D::initLangevin:: Driven Brownian integrator,";
     break;
   }
   resetLastPositions();

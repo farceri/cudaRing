@@ -46,6 +46,7 @@ __constant__ double d_ec; // interaction
 // attractive constants
 __constant__ double d_l1; // depth
 __constant__ double d_l2; // range
+__constant__ double d_eAdh;
 // Lennard-Jones constants
 __constant__ double d_LJcutoff;
 __constant__ double d_LJecut;
@@ -78,33 +79,39 @@ inline __device__ double pbcDistance(const double x1, const double x2, const lon
 	return delta - size * round(delta / size); //round for distance, floor for position
 }
 
-//distance leesEdwards boundary conditions
-inline __device__ double pbcDistanceLE(const double x1, const double y1, const double x2, const double y2) {
-	auto deltax = (x1 - x2);
-	auto rounded = round(deltax); //need to store for lees-edwards BC
-	deltax -= rounded;
-	auto deltay = (y1 - y2);
-	deltay = deltay - rounded * d_LEstrain - round(deltay - rounded * d_LEstrain);
-	return deltay;
-}
-
-inline __device__ double boxDistance(const double x1, const double x2, const long dim) {
+inline __device__ double boxDistance(const double* vec1, const double* vec2, const long dim) {
+	double deltax, deltay, shifty;
 	switch (d_simControl.geometryType) {
 		case simControlStruct::geometryEnum::normal:
-		return pbcDistance(x1, x2, dim);
+		return pbcDistance(vec1[dim], vec2[dim], dim);
 		case simControlStruct::geometryEnum::fixedBox:
-		return (x1 - x2);
+		return (vec1[dim] - vec2[dim]);
 		break;
 		case simControlStruct::geometryEnum::fixedSides:
 		if (dim == 0) {
-			return pbcDistance(x1, x2, dim);
+			return pbcDistance(vec1[dim], vec2[dim], dim);
 		} else {
-			return (x1 - x2);
+			return (vec1[dim] - vec2[dim]);
 		}
 		break;
 		case simControlStruct::geometryEnum::roundBox:
-		return (x1 - x2);
+		return (vec1[dim] - vec2[dim]);
 		break;
+		case simControlStruct::geometryEnum::leesEdwards: // this only works in 2D
+		deltay = vec1[1] - vec2[1];
+		shifty = round(deltay / d_boxSizePtr[1]) * d_boxSizePtr[1];
+		deltay -= shifty;
+		if(dim == 0) {
+			deltax = vec1[0] - vec2[0];
+			deltax -= shifty * d_LEstrain;
+			deltax -= round(deltax / d_boxSizePtr[0]) * d_boxSizePtr[0];
+			return deltax;
+		} else {
+			return deltay;
+		}
+		break;
+		default:
+		return 0.0;
 	}
 }
 
@@ -176,21 +183,22 @@ inline __device__ double calcDistance(const double* thisVec, const double* other
 		case simControlStruct::geometryEnum::leesEdwards:
 		deltay = thisVec[1] - otherVec[1];
 		shifty = round(deltay / d_boxSizePtr[1]) * d_boxSizePtr[1];
+		deltay -= shifty;
 		deltax = thisVec[0] - otherVec[0];
 		deltax -= shifty * d_LEstrain;
 		deltax -= round(deltax / d_boxSizePtr[0]) * d_boxSizePtr[0];
-		deltay -= shifty;
 		distanceSq = deltax * deltax + deltay * deltay;
 		return sqrt(distanceSq);
 		break;
+		default:
+		return 0.0;
 	}
 }
 
 inline __device__ double calcDeltaAndDistance(const double* thisVec, const double* otherVec, double* deltaVec) {
 	auto delta = 0.0;
 	auto distanceSq = 0.0;
-	auto shifty = 0.0;
-  	//double r1, theta1, r2, theta2, deltaR, deltaTheta;
+	double shifty;
 	switch (d_simControl.geometryType) {
 		case simControlStruct::geometryEnum::normal:
 		#pragma unroll (MAXDIM)
@@ -229,12 +237,56 @@ inline __device__ double calcDeltaAndDistance(const double* thisVec, const doubl
 		case simControlStruct::geometryEnum::leesEdwards:
 		deltaVec[1] = thisVec[1] - otherVec[1];
 		shifty = round(deltaVec[1] / d_boxSizePtr[1]) * d_boxSizePtr[1];
+		deltaVec[1] -= shifty;
 		deltaVec[0] = thisVec[0] - otherVec[0];
 		deltaVec[0] -= shifty * d_LEstrain;
 		deltaVec[0] -= round(deltaVec[0] / d_boxSizePtr[0]) * d_boxSizePtr[0];
-		deltaVec[1] -= shifty;
 		distanceSq = deltaVec[0] * deltaVec[0] + deltaVec[1] * deltaVec[1];
 		return sqrt(distanceSq);
+		break;
+		default:
+		return 0.0;
+	}
+}
+
+inline __device__ void getDelta(const double* thisVec, const double* otherVec, double* deltaVec) {
+	auto delta = 0.0;
+	double shifty, deltax, deltay;
+	switch (d_simControl.geometryType) {
+		case simControlStruct::geometryEnum::normal:
+		#pragma unroll (MAXDIM)
+	  	for (long dim = 0; dim < d_nDim; dim++) {
+	    	delta = pbcDistance(thisVec[dim], otherVec[dim], dim);
+			deltaVec[dim] = delta;
+	 	}
+		break;
+		case simControlStruct::geometryEnum::fixedBox:
+		#pragma unroll (MAXDIM)
+		for (long dim = 0; dim < d_nDim; dim++) {
+			delta = thisVec[dim] - otherVec[dim];
+			deltaVec[dim] = delta;
+		}
+		break;
+		case simControlStruct::geometryEnum::fixedSides:
+		deltaVec[1] = thisVec[1] - otherVec[1];
+		deltaVec[0] = pbcDistance(thisVec[0], otherVec[0], 0);
+		break;
+		case simControlStruct::geometryEnum::roundBox:
+		#pragma unroll (MAXDIM)
+		for (long dim = 0; dim < d_nDim; dim++) {
+			delta = thisVec[dim] - otherVec[dim];
+			deltaVec[dim] = delta;
+		}
+		break;
+		case simControlStruct::geometryEnum::leesEdwards:
+		deltay = thisVec[1] - otherVec[1];
+		shifty = round(deltay / d_boxSizePtr[1]) * d_boxSizePtr[1];
+		deltay -= shifty;
+		deltax = thisVec[0] - otherVec[0];
+		deltax -= shifty * d_LEstrain;
+		deltax -= round(deltax / d_boxSizePtr[0]) * d_boxSizePtr[0];
+		deltaVec[0] = deltax;
+		deltaVec[1] = deltay;
 		break;
 	}
 }
@@ -243,13 +295,6 @@ inline __device__ void getSegment(const double* thisVec, const double* otherVec,
 	#pragma unroll (MAXDIM)
   	for (long dim = 0; dim < d_nDim; dim++) {
     	segment[dim] = thisVec[dim] - otherVec[dim];
-  	}
-}
-
-inline __device__ void getDelta(const double* thisVec, const double* otherVec, double* delta) {
-	#pragma unroll (MAXDIM)
-  	for (long dim = 0; dim < d_nDim; dim++) {
-    	delta[dim] = boxDistance(thisVec[dim], otherVec[dim], dim);
   	}
 }
 
@@ -286,6 +331,14 @@ inline __device__ void getVertexPos(const long vId, const double* pos, double* v
 	}
 }
 
+inline __device__ void getRelativeVertexPos(const long vId, const double* pos, double* vPos, const double* partPos) {
+	getVertexPos(vId, pos, vPos);
+	#pragma unroll (MAXDIM)
+  	for (long dim = 0; dim < d_nDim; dim++) {
+    	vPos[dim] = boxDistance(vPos, partPos, dim);
+  	}
+}
+
 inline __device__ void getVertexPBCPos(const long vId, const double* pos, double* vPos) {
 	#pragma unroll (MAXDIM)
   	for (long dim = 0; dim < d_nDim; dim++) {
@@ -305,16 +358,6 @@ inline __device__ void getVertex(const long thisId, const double* pos, const dou
   	getVertexPos(thisId, pos, otherPos);
   	otherRad = rad[thisId];
 }
-
-
-inline __device__ void getRelativeVertexPos(const long vId, const double* pos, double* vPos, const double* partPos) {
-	getVertexPos(vId, pos, vPos);
-	#pragma unroll (MAXDIM)
-  	for (long dim = 0; dim < d_nDim; dim++) {
-    	vPos[dim] = boxDistance(vPos[dim], partPos[dim], dim);
-  	}
-}
-
 inline __device__ bool extractOtherVertex(const long vertexId, const long otherId, const double* pos, const double* rad, double* otherPos, double& otherRad) {
 	if ((d_particleIdListPtr[vertexId] != d_particleIdListPtr[otherId]) && (otherId != -1)) {
 		getVertex(otherId, pos, rad, otherPos, otherRad);
@@ -422,7 +465,7 @@ inline __device__ void calcParticlePos(const long particleId, const double* pos,
 		nextId = getNextId(currentId, particleId);
 		#pragma unroll (MAXDIM)
 		for (long dim = 0; dim < d_nDim; dim++) {
-			delta[dim] = boxDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
+			delta[dim] = boxDistance(&pos[nextId * d_nDim], &pos[currentId * d_nDim], dim);
 			currentPos[dim] += delta[dim];
 			partPos[dim] += currentPos[dim];
 		}
@@ -445,7 +488,7 @@ inline __device__ double getParticleArea(const long particleId, const double* po
 		nextId = getNextId(currentId, particleId);
 		#pragma unroll (MAXDIM)
 		for (long dim = 0; dim < d_nDim; dim++) {
-			delta[dim] = boxDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
+			delta[dim] = boxDistance(&pos[nextId * d_nDim], &pos[currentId * d_nDim], dim);
 			nextPos[dim] = currentPos[dim] + delta[dim];
 		}
 		tempArea += currentPos[0] * nextPos[1] - nextPos[0] * currentPos[1];
@@ -517,7 +560,7 @@ inline __device__ double calcBendingForceEnergy(const double* preSegment, const 
 }
 
 // this, next and previous are for vertices belonging to the same particle
-__global__ void kernelCalcShapeForceEnergy(const double* a0, const double* area, const double* particlePos, const double* l0, const double* theta0, const double* theta, const double* pos, double* force, double* energy) {
+__global__ void kernelCalcShapeForceEnergy(const double* a0, const double* area, const double* particlePos, const double* l0, const double* theta0, const double* theta, const double* pos, double* force, double* energy, double* shapeStress) {
 	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	long particleId = d_particleIdListPtr[vertexId];
   	if (vertexId < d_numVertices) {
@@ -571,6 +614,13 @@ __global__ void kernelCalcShapeForceEnergy(const double* a0, const double* area,
 		shapeEnergy += calcBendingForceEnergy(previousSegment, nextSegment, thisAngleDelta, nextAngleDelta, previousAngleDelta, &force[vertexId*d_nDim]);
     	energy[vertexId] = shapeEnergy;
 		//printf("\n shape: vertexId %ld \t fx: %.13e \t fy: %.13e \n", vertexId, force[vertexId*d_nDim], force[vertexId*d_nDim+1]);
+		// collect shape stress
+		if(d_nDim == 2) {
+			shapeStress[vertexId *4] = vertexPos[0] * force[vertexId * d_nDim];   // r_x F_x
+			shapeStress[vertexId * 4 + 1] = vertexPos[1] * force[vertexId * d_nDim];   // r_y F_x
+			shapeStress[vertexId * 4 + 2] = vertexPos[0] * force[vertexId * d_nDim + 1];   // r_x F_y
+			shapeStress[vertexId * 4 + 3] = vertexPos[1] * force[vertexId * d_nDim + 1];   // r_y F_y
+		}
 	}
 }
 
@@ -589,7 +639,7 @@ inline __device__ double calcTensionForceEnergy(const double nGamma, const doubl
 }
 
 // this, next and previous are for vertices belonging to the same particle
-__global__ void kernelCalcShapeForceEnergyTension(const double* a0, const double* area, const double* particlePos, const double* l0, const double* theta0, const double* gamma0, const double* theta, const double* pos, double* force, double* energy) {
+__global__ void kernelCalcShapeForceEnergyTension(const double* a0, const double* area, const double* particlePos, const double* l0, const double* theta0, const double* gamma0, const double* theta, const double* pos, double* force, double* energy, double* shapeStress) {
 	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	long particleId = d_particleIdListPtr[vertexId];
   	if (vertexId < d_numVertices) {
@@ -632,6 +682,41 @@ __global__ void kernelCalcShapeForceEnergyTension(const double* a0, const double
 	 	auto nextAngleDelta = theta[nextId] - theta0[nextId];
 		shapeEnergy += calcBendingForceEnergy(previousSegment, nextSegment, thisAngleDelta, nextAngleDelta, previousAngleDelta, &force[vertexId*d_nDim]);
     	energy[vertexId] = shapeEnergy;
+		// collect shape stress
+		if(d_nDim == 2) {
+			shapeStress[vertexId *4] = vertexPos[0] * force[vertexId * d_nDim];   // r_x F_x
+			shapeStress[vertexId * 4 + 1] = vertexPos[1] * force[vertexId * d_nDim];   // r_y F_x
+			shapeStress[vertexId * 4 + 2] = vertexPos[0] * force[vertexId * d_nDim + 1];   // r_x F_y
+			shapeStress[vertexId * 4 + 3] = vertexPos[1] * force[vertexId * d_nDim + 1];   // r_y F_y
+		}
+	}
+}
+
+__global__ void kernelCalcTensionComponents(const double* pos, const double* gamma0, const double* g0Rest, double* fTan, double* fNorm) {
+	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
+	if (vertexId < d_numVertices) {
+		long particleId = d_particleIdListPtr[vertexId];
+		long nextId = getNextId(vertexId, particleId);
+		long previousId = getPreviousId(vertexId, particleId);
+		double vPos[MAXDIM], nPos[MAXDIM], pPos[MAXDIM], a[MAXDIM], b[MAXDIM];
+		getVertexPos(vertexId, pos, vPos);
+		getVertexPos(nextId, pos, nPos);
+		getVertexPos(previousId, pos, pPos);
+		getDelta(nPos, vPos, a);          // next - this
+		getDelta(pPos, vPos, b);          // previous - this
+		double la = sqrt(a[0]*a[0] + a[1]*a[1]);
+		double lb = sqrt(b[0]*b[0] + b[1]*b[1]);
+		// fluctuating tension on the two segments meeting at this vertex (after the clip)
+		double dgN = fmax(gamma0[vertexId], 0.0) - g0Rest[vertexId];
+		double dgP = fmax(gamma0[previousId], 0.0) - g0Rest[previousId];
+		double fx = dgN * a[0] / la + dgP * b[0] / lb;
+		double fy = dgN * a[1] / la + dgP * b[1] / lb;
+		// local frame: central-difference tangent, rotated normal
+		double tx = a[0] - b[0], ty = a[1] - b[1];
+		double tn = sqrt(tx*tx + ty*ty);
+		tx /= tn; ty /= tn;
+		fTan[vertexId] = fx * tx + fy * ty;
+		fNorm[vertexId] = -fx * ty + fy * tx;   // n = (-ty, tx)
 	}
 }
 
@@ -654,7 +739,7 @@ __global__ void kernelCalcRestLengthInteraction(const double* l0, double* l0Vel)
   	}
 }
 
-inline __device__ double calcContactInteraction(const double* thisPos, const double* otherPos, const double radSum, double* currentForce) {
+inline __device__ double calcContactInteraction(const double* thisPos, const double* otherPos, const double radSum, double* currentForce, double* currentStress) {
   	double delta[MAXDIM];
 	auto distance = calcDeltaAndDistance(thisPos, otherPos, delta);
 	auto overlap = 1 - distance / radSum;
@@ -664,22 +749,10 @@ inline __device__ double calcContactInteraction(const double* thisPos, const dou
 	  	for (long dim = 0; dim < d_nDim; dim++) {
 	    	currentForce[dim] += gradMultiple * delta[dim] / distance;
 	  	}
-	  	return (0.5 * d_ec * overlap * overlap) * 0.5;
-	}
-	return 0.0;
-}
-
-inline __device__ double calcContactInteraction2(const double* thisPos, const double* otherPos, const double radSum, double* currentForce, double* otherForce) {
-  	double delta[MAXDIM];
-	auto distance = calcDeltaAndDistance(thisPos, otherPos, delta);
-	auto overlap = 1 - distance / radSum;
-	if (overlap > 0) {
-		auto gradMultiple = d_ec * overlap / radSum;
-		#pragma unroll (MAXDIM)
-		for (long dim = 0; dim < d_nDim; dim++) {
-			atomicAdd(&currentForce[dim], gradMultiple * delta[dim] / distance);
-			atomicAdd(&otherForce[dim], -gradMultiple * delta[dim] / distance);
-		}
+		currentStress[0] += 0.5 * delta[0] * gradMultiple * delta[0] / distance;
+		currentStress[1] += 0.5 * delta[1] * gradMultiple * delta[0] / distance;
+		currentStress[2] += 0.5 * delta[0] * gradMultiple * delta[1] / distance;
+		currentStress[3] += 0.5 * delta[1] * gradMultiple * delta[1] / distance;
 	  	return (0.5 * d_ec * overlap * overlap) * 0.5;
 	}
 	return 0.0;
@@ -690,7 +763,7 @@ inline __device__ double calcLJForceShift(const double radSum) {
 	return 24 * d_ec * (2 / ratio6 - 1) / (d_LJcutoff * radSum * ratio6);
 }
 
-inline __device__ double calcLJInteraction(const double* thisPos, const double* otherPos, const double radSum, double* currentForce) {
+inline __device__ double calcLJInteraction(const double* thisPos, const double* otherPos, const double radSum, double* currentForce, double* currentStress) {
   	double delta[MAXDIM];
 	auto distance = calcDeltaAndDistance(thisPos, otherPos, delta);
 	auto ratio = radSum / distance;
@@ -703,31 +776,16 @@ inline __device__ double calcLJInteraction(const double* thisPos, const double* 
 		for (long dim = 0; dim < d_nDim; dim++) {
 	    	currentForce[dim] += gradMultiple * delta[dim] / distance;
 	  	}
+		currentStress[0] += 0.5 * delta[0] * gradMultiple * delta[0] / distance;
+		currentStress[1] += 0.5 * delta[1] * gradMultiple * delta[0] / distance;
+		currentStress[2] += 0.5 * delta[0] * gradMultiple * delta[1] / distance;
+		currentStress[3] += 0.5 * delta[1] * gradMultiple * delta[1] / distance;
 		return 0.5 * (4 * d_ec * (ratio12 - ratio6) - d_LJecut - abs(forceShift) * (distance - d_LJcutoff * radSum));
 	}
 	return 0.0;
 }
 
-inline __device__ double calcLJInteraction2(const double* thisPos, const double* otherPos, const double radSum, double* currentForce, double* otherForce) {
-	double delta[MAXDIM];
-	auto distance = calcDeltaAndDistance(thisPos, otherPos, delta);
-	auto ratio = radSum / distance;
-	auto ratio6 = pow(ratio, 6);
-	auto ratio12 = ratio6 * ratio6;
-	if (distance <= (d_LJcutoff * radSum)) {
-		auto forceShift = calcLJForceShift(radSum);
-		auto gradMultiple = 24 * d_ec * (2 * ratio12 - ratio6) / distance - forceShift;
-		#pragma unroll (MAXDIM)
-		for (long dim = 0; dim < d_nDim; dim++) {
-	    	atomicAdd(&currentForce[dim], gradMultiple * delta[dim] / distance);
-	    	atomicAdd(&otherForce[dim], -gradMultiple * delta[dim] / distance);
-	  	}
-		return 0.5 * (4 * d_ec * (ratio12 - ratio6) - d_LJecut + forceShift * (distance - d_LJcutoff * radSum));
-	}
-	return 0.0;
-}
-
-inline __device__ double calcAdhesiveInteraction(const double* thisPos, const double* otherPos, const double radSum, double* currentForce) {
+inline __device__ double calcAdhesiveInteraction(const double* thisPos, const double* otherPos, const double radSum, double* currentForce, double* currentStress) {
   	auto gradMultiple = 0.0;
 	auto epot = 0.0;
 	double delta[MAXDIM];
@@ -745,38 +803,17 @@ inline __device__ double calcAdhesiveInteraction(const double* thisPos, const do
 		for (long dim = 0; dim < d_nDim; dim++) {
 	    	currentForce[dim] += gradMultiple * delta[dim] / distance;
 	  	}
+		currentStress[0] += 0.5 * delta[0] * gradMultiple * delta[0] / distance;
+		currentStress[1] += 0.5 * delta[1] * gradMultiple * delta[0] / distance;
+		currentStress[2] += 0.5 * delta[0] * gradMultiple * delta[1] / distance;
+		currentStress[3] += 0.5 * delta[1] * gradMultiple * delta[1] / distance;
 		return epot;
 	} else {
 		return 0.0;
 	}
 }
 
-inline __device__ double calcAdhesiveInteraction2(const double* thisPos, const double* otherPos, const double radSum, double* currentForce, double* otherForce) {
-  	auto gradMultiple = 0.0;
-	auto epot = 0.0;
-	double delta[MAXDIM];
-	auto distance = calcDeltaAndDistance(thisPos, otherPos, delta);
-	auto overlap = 1 - distance / radSum;
-	if(distance < (1 + d_l2) * radSum) {
-		if (distance < (1 + d_l1) * radSum) {
-			gradMultiple = d_ec * overlap / radSum;
-			epot = 0.5 * d_ec * (overlap * overlap - d_l1 * d_l2) * 0.5;
-		} else {//if ((distance >= (1 + d_l1) * radSum) && (distance < (1 + d_l2) * radSum)) {
-			gradMultiple = -(d_ec * d_l1 / (d_l2 - d_l1)) * (overlap + d_l2) / radSum;
-			epot = -(0.5 * (d_ec * d_l1 / (d_l2 - d_l1)) * (overlap + d_l2) * (overlap + d_l2)) * 0.5;
-		}
-		#pragma unroll (MAXDIM)
-		for (long dim = 0; dim < d_nDim; dim++) {
-	    	atomicAdd(&currentForce[dim], gradMultiple * delta[dim] / distance);
-	    	atomicAdd(&otherForce[dim], -gradMultiple * delta[dim] / distance);
-	  	}
-		return epot;
-	} else {
-		return 0.0;
-	}
-}
-
-inline __device__ double calcWCAInteraction(const double* thisPos, const double* otherPos, const double radSum, double* currentForce) {
+inline __device__ double calcWCAInteraction(const double* thisPos, const double* otherPos, const double radSum, double* currentForce, double* currentStress) {
 	double delta[MAXDIM];
 	auto distance = calcDeltaAndDistance(thisPos, otherPos, delta);
 	auto ratio = radSum / distance;
@@ -788,32 +825,60 @@ inline __device__ double calcWCAInteraction(const double* thisPos, const double*
 		for (long dim = 0; dim < d_nDim; dim++) {
 			currentForce[dim] += gradMultiple * delta[dim] / distance;
 		}
+		currentStress[0] += 0.5 * delta[0] * gradMultiple * delta[0] / distance;
+		currentStress[1] += 0.5 * delta[1] * gradMultiple * delta[0] / distance;
+		currentStress[2] += 0.5 * delta[0] * gradMultiple * delta[1] / distance;
+		currentStress[3] += 0.5 * delta[1] * gradMultiple * delta[1] / distance;
 		return 0.5 * d_ec * (4 * (ratio12 - ratio6) + 1);
 	}
 	return 0;
 }
 
-inline __device__ double calcWCAInteraction2(const double* thisPos, const double* otherPos, const double radSum, double* currentForce, double* otherForce) {
+// combined potential: WCA core for r <= 2^(1/6) sigma, then a triangular attractive force
+// returns gradMultiple = -dU/dr (positive = repulsive) and epot = 0.5 * U (pair split)
+inline __device__ double calcAdhesiveWCAGradAndEnergy(const double distance, const double radSum, double &epot) {
+	const double rc = WCAcut * radSum;          // WCA minimum, zero force
+	const double r1 = (1. + d_l1) * radSum;     // maximum attraction
+	const double r2 = (1. + d_l2) * radSum;     // end of attraction
+	epot = 0.0;
+	if (distance >= r2) return 0.0;
+	if (distance <= rc) {
+		const double ratio = radSum / distance;
+		const double ratio6 = pow(ratio, 6);
+		const double ratio12 = ratio6 * ratio6;
+		// WCA energy shifted down by the well depth so the energy is continuous at rc
+		epot = 0.5 * (d_ec * (4. * (ratio12 - ratio6) + 1.) - d_eAdh);
+		return 24. * d_ec * (2. * ratio12 - ratio6) / distance;
+	}
+	const double maxGrad = 2. * d_eAdh / (r2 - rc);   // area under the triangle = d_eAdh
+	if (distance <= r1) {
+		epot = 0.5 * (-d_eAdh + 0.5 * maxGrad * (distance - rc) * (distance - rc) / (r1 - rc));
+		return -maxGrad * (distance - rc) / (r1 - rc);
+	}
+	epot = -0.25 * maxGrad * (r2 - distance) * (r2 - distance) / (r2 - r1);
+	return -maxGrad * (r2 - distance) / (r2 - r1);
+}
+
+inline __device__ double calcAdhesiveWCAInteraction(const double* thisPos, const double* otherPos, const double radSum, double* currentForce, double* currentStress) {
 	double delta[MAXDIM];
 	auto distance = calcDeltaAndDistance(thisPos, otherPos, delta);
-	auto ratio = radSum / distance;
-	auto ratio6 = pow(ratio, 6);
-	auto ratio12 = ratio6 * ratio6;
-	if (distance <= (WCAcut * radSum)) {
-		auto gradMultiple = 24 * d_ec * (2 * ratio12 - ratio6) / distance;
+	auto epot = 0.0;
+	auto gradMultiple = calcAdhesiveWCAGradAndEnergy(distance, radSum, epot);
+	if (gradMultiple != 0.0) {
 		#pragma unroll (MAXDIM)
 		for (long dim = 0; dim < d_nDim; dim++) {
-			atomicAdd(&currentForce[dim], 0.5 * gradMultiple * delta[dim] / distance);
-	    	atomicAdd(&otherForce[dim], -0.5 * gradMultiple * delta[dim] / distance);
+			currentForce[dim] += gradMultiple * delta[dim] / distance;
 		}
-		return 0.5 * d_ec * (4 * (ratio12 - ratio6) + 1);
-	} else {
-		return 0.0;
+		currentStress[0] += 0.5 * delta[0] * gradMultiple * delta[0] / distance;
+		currentStress[1] += 0.5 * delta[1] * gradMultiple * delta[0] / distance;
+		currentStress[2] += 0.5 * delta[0] * gradMultiple * delta[1] / distance;
+		currentStress[3] += 0.5 * delta[1] * gradMultiple * delta[1] / distance;
 	}
+	return epot;
 }
 
 // this and other are for vertices belonging to neighbor particles
-__global__ void kernelCalcVertexInteraction(const double* rad, const double* pos, double* force, double* energy) {
+__global__ void kernelCalcVertexInteraction(const double* rad, const double* pos, double* force, double* energy, double* intStress) {
   	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
     	auto otherRad = 0.0;
@@ -828,16 +893,19 @@ __global__ void kernelCalcVertexInteraction(const double* rad, const double* pos
 				auto radSum = thisRad + otherRad;
 				switch (d_simControl.potentialType) {
 					case simControlStruct::potentialEnum::harmonic:
-					energy[vertexId] += calcContactInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcContactInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 					case simControlStruct::potentialEnum::lennardJones:
-					energy[vertexId] += calcLJInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcLJInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 					case simControlStruct::potentialEnum::adhesive:
-					energy[vertexId] += calcAdhesiveInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcAdhesiveInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 					case simControlStruct::potentialEnum::wca:
-					energy[vertexId] += calcWCAInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcWCAInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
+					break;
+					case simControlStruct::potentialEnum::adhesivewca:
+					energy[vertexId] += calcAdhesiveWCAInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 				}
 				//if(calcOverlap(thisPos, otherPos, radSum) > 0) printf("\n vertexId %ld \t neighbor: %ld \t overlap %lf \t %lf \t distance: %lf \t radSum: %lf \t thisRad: %lf \t otherRad: %lf \n", vertexId, d_neighborListPtr[vertexId*d_neighborListSize + nListId], calcOverlap(thisPos, otherPos, radSum), 1-calcDistance(thisPos, otherPos)/radSum, calcDistance(thisPos, otherPos), radSum, thisRad, otherRad);
@@ -848,7 +916,7 @@ __global__ void kernelCalcVertexInteraction(const double* rad, const double* pos
 }
 
 // this and other are for vertices belonging to neighbor particles
-__global__ void kernelCalcAllToAllVertexInteraction(const double* rad, const double* pos, double* force, double* energy) {
+__global__ void kernelCalcAllToAllVertexInteraction(const double* rad, const double* pos, double* force, double* energy, double* intStress) {
   	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
     	auto otherRad = 0.0;
@@ -863,65 +931,21 @@ __global__ void kernelCalcAllToAllVertexInteraction(const double* rad, const dou
 				auto radSum = thisRad + otherRad;
 				switch (d_simControl.potentialType) {
 					case simControlStruct::potentialEnum::harmonic:
-					energy[vertexId] += calcContactInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcContactInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 					case simControlStruct::potentialEnum::lennardJones:
-					energy[vertexId] += calcLJInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcLJInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 					case simControlStruct::potentialEnum::adhesive:
-					energy[vertexId] += calcAdhesiveInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcAdhesiveInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 					case simControlStruct::potentialEnum::wca:
-					energy[vertexId] += calcWCAInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcWCAInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
+					break;
+					case simControlStruct::potentialEnum::adhesivewca:
+					energy[vertexId] += calcAdhesiveWCAInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 				}
-				//if(calcOverlap(thisPos, otherPos, radSum) > 0) printf("\n vertexId %ld \t neighbor: %ld \t overlap %lf \t %lf \t distance: %lf \t radSum: %lf \t thisRad: %lf \t otherRad: %lf \n", vertexId, d_neighborListPtr[vertexId*d_neighborListSize + nListId], calcOverlap(thisPos, otherPos, radSum), 1-calcDistance(thisPos, otherPos)/radSum, calcDistance(thisPos, otherPos), radSum, thisRad, otherRad);
-				//printf("interaction: vertexId %ld \t neighborId %ld \t fx: %e \t fy: %e \t overlap: %e \n", vertexId, d_neighborListPtr[vertexId*d_neighborListSize + nListId], force[vertexId*d_nDim], force[vertexId*d_nDim+1], calcOverlap(thisPos, otherPos, radSum));
-			}
-		}
-  	}
-}
-
-// this and other are for vertices belonging to neighbor particles
-__global__ void kernelCalcVertexInteraction2(const double* rad, const double* pos, double* force, double* energy) {
-  	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
-  	if (vertexId < d_numVertices) {
-		thread_block block = this_thread_block();
-    	auto otherRad = 0.0;
-		auto interaction = 0.0;
-		double thisPos[MAXDIM], otherPos[MAXDIM];
-		// we don't zero out the force because we always call this function
-		// after kernelCalcShapeForceEnergy where the force is zeroed out
-		getVertexPos(vertexId, pos, thisPos);
-    	auto thisRad = rad[vertexId];
-    	// interaction between vertices of neighbor particles
-    	for (long nListId = 0; nListId < d_maxNeighborListPtr[vertexId]; nListId++) {
-      		if(extractNeighbor(vertexId, nListId, pos, rad, otherPos, otherRad)) {
-				auto otherId = d_neighborListPtr[vertexId*d_neighborListSize + nListId];
-				auto radSum = thisRad + otherRad;
-				switch (d_simControl.potentialType) {
-					case simControlStruct::potentialEnum::harmonic:
-					interaction = calcContactInteraction2(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim]);
-					atomicAdd(&energy[vertexId], 0.5 * interaction);
-					atomicAdd(&energy[otherId], 0.5 * interaction);
-					break;
-					case simControlStruct::potentialEnum::lennardJones:
-					interaction = calcLJInteraction2(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim]);
-					atomicAdd(&energy[vertexId], 0.5 * interaction);
-					atomicAdd(&energy[otherId], 0.5 * interaction);
-					break;
-					case simControlStruct::potentialEnum::adhesive:
-					interaction = calcAdhesiveInteraction2(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim]);
-					atomicAdd(&energy[vertexId], 0.5 * interaction);
-					atomicAdd(&energy[otherId], 0.5 * interaction);
-					break;
-					case simControlStruct::potentialEnum::wca:
-					interaction = calcWCAInteraction2(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim]);
-					atomicAdd(&energy[vertexId], 0.5 * interaction);
-					atomicAdd(&energy[otherId], 0.5 * interaction);
-					break;
-				}
-				block.sync();
 				//if(calcOverlap(thisPos, otherPos, radSum) > 0) printf("\n vertexId %ld \t neighbor: %ld \t overlap %lf \t %lf \t distance: %lf \t radSum: %lf \t thisRad: %lf \t otherRad: %lf \n", vertexId, d_neighborListPtr[vertexId*d_neighborListSize + nListId], calcOverlap(thisPos, otherPos, radSum), 1-calcDistance(thisPos, otherPos)/radSum, calcDistance(thisPos, otherPos), radSum, thisRad, otherRad);
 				//printf("interaction: vertexId %ld \t neighborId %ld \t fx: %e \t fy: %e \t overlap: %e \n", vertexId, d_neighborListPtr[vertexId*d_neighborListSize + nListId], force[vertexId*d_nDim], force[vertexId*d_nDim+1], calcOverlap(thisPos, otherPos, radSum));
 			}
@@ -931,6 +955,7 @@ __global__ void kernelCalcVertexInteraction2(const double* rad, const double* po
 
 inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const double* otherPos, const double radSum, double &epot) {
 	double overlap, ratio, ratio6, ratio12;
+	double rc, r1, r2, maxGrad;
 	auto distance = calcDistance(thisPos, otherPos);
 	switch (d_simControl.potentialType) {
 		case simControlStruct::potentialEnum::harmonic:
@@ -939,7 +964,7 @@ inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const 
 			epot = 0.5 * d_ec * overlap * overlap * 0.5;
 			return d_ec * overlap / radSum;
 		} else {
-			return 0;
+			return 0.0;
 		}
 		break;
 		case simControlStruct::potentialEnum::lennardJones:
@@ -951,19 +976,21 @@ inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const 
 			epot = 0.5 * (4 * d_ec * (ratio12 - ratio6) - d_LJecut - abs(forceShift) * (distance - d_LJcutoff * radSum));
 			return 24 * d_ec * (2 * ratio12 - ratio6) / distance - forceShift;
 		} else {
-			return 0;
+			return 0.0;
 		}
 		break;
 		case simControlStruct::potentialEnum::adhesive:
 		overlap = 1 - distance / radSum;
-		if (distance < (1 + d_l1) * radSum) {
-			epot = 0.5 * d_ec * (overlap * overlap - d_l1 * d_l2) * 0.5;
-			return d_ec * overlap / radSum;
-		} else if ((distance >= (1 + d_l1) * radSum) && (distance < (1 + d_l2) * radSum)) {
-			epot = -(0.5 * (d_ec * d_l1 / (d_l2 - d_l1)) * (overlap + d_l2) * (overlap + d_l2)) * 0.5;
-			return -(d_ec * d_l1 / (d_l2 - d_l1)) * (overlap + d_l2) / radSum;
+		if(distance < (1 + d_l2) * radSum) {
+			if (distance < (1 + d_l1) * radSum) {
+				epot = 0.5 * d_ec * (overlap * overlap - d_l1 * d_l2) * 0.5;
+				return d_ec * overlap / radSum;
+			} else {
+				epot = -(0.5 * (d_ec * d_l1 / (d_l2 - d_l1)) * (overlap + d_l2) * (overlap + d_l2)) * 0.5;
+				return -(d_ec * d_l1 / (d_l2 - d_l1)) * (overlap + d_l2) / radSum;
+			}
 		} else {
-			return 0;
+			return 0.0;
 		}
 		break;
 		case simControlStruct::potentialEnum::wca:
@@ -974,8 +1001,29 @@ inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const 
 			epot = 0.5 * d_ec * (4 * (ratio12 - ratio6) + 1);
 			return 4 * d_ec * (12 * ratio12 - 6 * ratio6) / distance;
 		} else {
-			return 0;
+			return 0.0;
 		}
+		break;
+		case simControlStruct::potentialEnum::adhesivewca:
+		rc = WCAcut * radSum;          // WCA minimum, zero force
+		r1 = (1. + d_l1) * radSum;     // maximum attraction
+		r2 = (1. + d_l2) * radSum;     // end of attraction
+		if (distance >= r2) return 0.0;
+		if (distance <= rc) {
+			ratio = radSum / distance;
+			ratio6 = pow(ratio, 6);
+			ratio12 = ratio6 * ratio6;
+			// WCA energy shifted down by the well depth so the energy is continuous at rc
+			epot = 0.5 * (d_ec * (4. * (ratio12 - ratio6) + 1.) - d_eAdh);
+			return 24. * d_ec * (2. * ratio12 - ratio6) / distance;
+		}
+		maxGrad = 2. * d_eAdh / (r2 - rc);   // area under the triangle = d_eAdh
+		if (distance <= r1) {
+			epot = 0.5 * (-d_eAdh + 0.5 * maxGrad * (distance - rc) * (distance - rc) / (r1 - rc));
+			return -maxGrad * (distance - rc) / (r1 - rc);
+		}
+		epot = -0.25 * maxGrad * (r2 - distance) * (r2 - distance) / (r2 - r1);
+		return -maxGrad * (r2 - distance) / (r2 - r1);
 		break;
 		default:
 		return 0;
@@ -985,23 +1033,23 @@ inline __device__ double calcGradMultipleAndEnergy(const double* thisPos, const 
 
 // clockwise projection
 inline __device__ double getProjection(const double* thisPos, const double* otherPos, const double* previousPos, const double length) {
-	return (boxDistance(thisPos[0], previousPos[0], 0) * boxDistance(otherPos[0], previousPos[0], 0) + boxDistance(thisPos[1], previousPos[1], 1) * boxDistance(otherPos[1], previousPos[1], 1)) / (length * length);
+	return (boxDistance(thisPos, previousPos, 0) * boxDistance(otherPos, previousPos, 0) + boxDistance(thisPos, previousPos, 1) * boxDistance(otherPos, previousPos, 1)) / (length * length);
 
 }
 
 inline __device__ void getProjectionPos(const double* previousPos, const double* segment, double* projPos, const double proj) {
 	auto reducedProj = max(0.0, min(1.0, proj));
+	#pragma unroll (MAXDIM)
 	for (long dim = 0; dim < d_nDim; dim++) {
 		projPos[dim] = previousPos[dim] + reducedProj * segment[dim];
 	}
 }
 
 inline __device__ double calcCross(const double* thisPos, const double* otherPos, const double* previousPos) {
-	return boxDistance(previousPos[0], otherPos[0],0) * boxDistance(otherPos[1], thisPos[1],1) - boxDistance(otherPos[0], thisPos[0],0) * boxDistance(previousPos[1], otherPos[1],1);
+	return boxDistance(previousPos, otherPos, 0) * boxDistance(otherPos, thisPos, 1) - boxDistance(otherPos, thisPos, 0) * boxDistance(previousPos, otherPos, 1);
 }
 
-inline __device__ double calcVertexSegmentInteraction(const double* thisPos, const double* projPos, const double* otherPos, const double* previousPos, const double length, const double radSum, double* thisForce, double* otherForce, double* previousForce) {
-	//double segment[MAXDIM];
+inline __device__ double calcVertexSegmentInteraction(const double* thisPos, const double* projPos, const double* otherPos, const double* previousPos, const double length, const double radSum, double* thisForce, double* otherForce, double* previousForce, double* thisStress, double* otherStress, double* previousStress) {
 	auto epot = 0.0;
 	auto gradMultiple = calcGradMultipleAndEnergy(thisPos, projPos, radSum, epot);
 	if (gradMultiple != 0) {
@@ -1009,29 +1057,65 @@ inline __device__ double calcVertexSegmentInteraction(const double* thisPos, con
 		auto absCross = fabs(cross);
 		auto sign = cross / absCross;
 		// this vertex
-	  	atomicAdd(&thisForce[0], gradMultiple * sign * boxDistance(previousPos[1], otherPos[1], 1) / length);
-	  	atomicAdd(&thisForce[1], gradMultiple * sign * boxDistance(otherPos[0], previousPos[0], 0) / length);
+	  	atomicAdd(&thisForce[0], gradMultiple * sign * boxDistance(previousPos, otherPos, 1) / length);
+	  	atomicAdd(&thisForce[1], gradMultiple * sign * boxDistance(otherPos, previousPos, 0) / length);
 		// other vertex
-	  	atomicAdd(&otherForce[0], gradMultiple * (sign * boxDistance(thisPos[1], previousPos[1], 1) + absCross * boxDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length);
-	  	atomicAdd(&otherForce[1], gradMultiple * (sign * boxDistance(previousPos[0], thisPos[0], 0) + absCross * boxDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length);
+	  	atomicAdd(&otherForce[0], gradMultiple * (sign * boxDistance(thisPos, previousPos, 1) + absCross * boxDistance(previousPos, otherPos, 0) / (length * length)) / length);
+	  	atomicAdd(&otherForce[1], gradMultiple * (sign * boxDistance(previousPos, thisPos, 0) + absCross * boxDistance(previousPos, otherPos, 1) / (length * length)) / length);
 		// previous vertex
-	  	atomicAdd(&previousForce[0], gradMultiple * (sign * boxDistance(otherPos[1], thisPos[1], 1) - absCross * boxDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length);
-	  	atomicAdd(&previousForce[1], gradMultiple * (sign * boxDistance(thisPos[0], otherPos[0], 0) - absCross * boxDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length);
-	  	return epot;
+	  	atomicAdd(&previousForce[0], gradMultiple * (sign * boxDistance(otherPos, thisPos, 1) - absCross * boxDistance(previousPos, otherPos, 0) / (length * length)) / length);
+	  	atomicAdd(&previousForce[1], gradMultiple * (sign * boxDistance(thisPos, otherPos, 0) - absCross * boxDistance(previousPos, otherPos, 1) / (length * length)) / length);
+		// collect interaction stress
+		const double inv = gradMultiple / length;
+		const double tan2 = absCross / (length * length);
+		// segment direction components (previous -> other)
+		const double segx = boxDistance(previousPos, otherPos, 0);
+		const double segy = boxDistance(previousPos, otherPos, 1);
+		double fO[2], fP[2];
+		fO[0] = inv * (sign * boxDistance(thisPos, previousPos, 1) + tan2 * segx);
+		fO[1] = inv * (sign * boxDistance(previousPos, thisPos, 0) + tan2 * segy);
+		fP[0] = inv * (sign * boxDistance(otherPos, thisPos, 1) - tan2 * segx);
+		fP[1] = inv * (sign * boxDistance(thisPos, otherPos, 0) - tan2 * segy);
+		const double dOx = boxDistance(otherPos, thisPos, 0), dOy = boxDistance(otherPos, thisPos, 1);
+		const double dPx = boxDistance(previousPos, thisPos, 0), dPy = boxDistance(previousPos, thisPos, 1);
+		const double sxx = dOx * fO[0] + dPx * fP[0];
+		const double syx = dOy * fO[0] + dPy * fP[0];
+		const double sxy = dOx * fO[1] + dPx * fP[1];
+		const double syy = dOy * fO[1] + dPy * fP[1];
+		// whole event counted once; split between the two cells for per-cell attribution
+		atomicAdd(&thisStress[0], 0.5 * sxx);  atomicAdd(&thisStress[1], 0.5 * syx);
+		atomicAdd(&thisStress[2], 0.5 * sxy);  atomicAdd(&thisStress[3], 0.5 * syy);
+		atomicAdd(&otherStress[0], 0.25 * sxx);  atomicAdd(&otherStress[1], 0.25 * syx);
+		atomicAdd(&otherStress[2], 0.25 * sxy);  atomicAdd(&otherStress[3], 0.25 * syy);
+		atomicAdd(&previousStress[0], 0.25 * sxx);  atomicAdd(&previousStress[1], 0.25 * syx);
+		atomicAdd(&previousStress[2], 0.25 * sxy);  atomicAdd(&previousStress[3], 0.25 * syy);
+		return epot;
 	}
 	return 0.;
 }
 
-inline __device__ double calcVertexVertexInteraction(const double* thisPos, const double* previousPos, const double radSum, double* thisForce, double* otherForce) {
+inline __device__ double calcVertexVertexInteraction(const double* thisPos, const double* previousPos, const double radSum, double* thisForce, double* otherForce, double* thisStress, double* otherStress) {
 	double delta[MAXDIM];
 	auto epot = 0.0;
 	auto gradMultiple = calcGradMultipleAndEnergy(thisPos, previousPos, radSum, epot);
 	if (gradMultiple != 0) {
 		auto distance = calcDeltaAndDistance(thisPos, previousPos, delta);
+		#pragma unroll (MAXDIM)
 		for (long dim = 0; dim < d_nDim; dim++) {
 			atomicAdd(&thisForce[dim], gradMultiple * delta[dim] / distance);
 			atomicAdd(&otherForce[dim], -gradMultiple * delta[dim] / distance);
 		}
+		// collect interaction stress
+		// this vertex
+		atomicAdd(&thisStress[0], 0.5 * delta[0] * gradMultiple * delta[0] / distance);
+		atomicAdd(&thisStress[1], 0.5 * delta[1] * gradMultiple * delta[0] / distance);
+		atomicAdd(&thisStress[2], 0.5 * delta[0] * gradMultiple * delta[1] / distance);
+		atomicAdd(&thisStress[3], 0.5 * delta[1] * gradMultiple * delta[1] / distance);
+		// other vertex
+		atomicAdd(&otherStress[0], 0.5 * delta[0] * gradMultiple * delta[0] / distance);
+		atomicAdd(&otherStress[1], 0.5 * delta[1] * gradMultiple * delta[0] / distance);
+		atomicAdd(&otherStress[2], 0.5 * delta[0] * gradMultiple * delta[1] / distance);
+		atomicAdd(&otherStress[3], 0.5 * delta[1] * gradMultiple * delta[1] / distance);
 		return epot;
 	}
 	return 0.;
@@ -1044,8 +1128,8 @@ inline __device__ double checkAngle(double angle, double limit) {
 	return angle - limit;
 }
 
-// interaction force between vertices computed sequentially for each particle
-__global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos, double* force, double* pEnergy) {
+// smooth interaction force between vertices of deformable particles fully computed in parallel
+__global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos, double* force, double* pEnergy, double* intStress) {
 	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
 		auto otherRad = 0.0;
@@ -1077,20 +1161,20 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
 				bool isPreviousVertexSegment = false;
 				if(projection >= 0 && projection < 1) {
 					getProjectionPos(previousPos, segment, projPos, projection);
-					interaction = calcVertexSegmentInteraction(thisPos, projPos, otherPos, previousPos, length, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim], &force[previousId*d_nDim]);
+					interaction = calcVertexSegmentInteraction(thisPos, projPos, otherPos, previousPos, length, radSum, &force[vertexId*d_nDim], &force[otherId*d_nDim], &force[previousId*d_nDim], &intStress[vertexId*4], &intStress[otherId*4], &intStress[previousId*4]);
 					atomicAdd(&pEnergy[particleId], interaction);
 					atomicAdd(&pEnergy[otherParticleId], interaction);
 					if(previousProj >= 0 && previousProj < 1) {
 						// other particle is concave - subtract excessive vertex-vertex interaction with shared vertex
 						isPreviousVertexSegment = true;
-						interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+						interaction = calcVertexVertexInteraction(previousPos, thisPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim], &intStress[vertexId*4], &intStress[previousId*4]);
 						atomicAdd(&pEnergy[particleId], -interaction);
 						atomicAdd(&pEnergy[otherParticleId], -interaction);
 					}
 				} else if(projection < 0) {
 					if(previousProj >= 1 && isPreviousVertexSegment == false) {
 					// other particle is convex - add vertex-vertex interaction
-					interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim]);
+					interaction = calcVertexVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &force[previousId*d_nDim], &intStress[vertexId*4], &intStress[previousId*4]);
 					atomicAdd(&pEnergy[particleId], interaction);
 					atomicAdd(&pEnergy[otherParticleId], interaction);
 					}
@@ -1100,22 +1184,28 @@ __global__ void kernelCalcSmoothInteraction(const double* rad, const double* pos
   	}
 }
 
-inline __device__ double calcSingleVertexInteraction(const double* thisPos, const double* otherPos, const double radSum, double* thisForce) {
+inline __device__ double calcSingleVertexInteraction(const double* thisPos, const double* otherPos, const double radSum, double* thisForce, double* thisStress) {
   	double delta[MAXDIM];
 	auto epot = 0.0;
 	auto gradMultiple = calcGradMultipleAndEnergy(thisPos, otherPos, radSum, epot);
 	if (gradMultiple != 0) {
 		auto distance = calcDeltaAndDistance(thisPos, otherPos, delta);
+		#pragma unroll (MAXDIM)
 		for (long dim = 0; dim < d_nDim; dim++) {
 			thisForce[dim] += gradMultiple * delta[dim] / distance;
 		}
+		// collect interaction stress
+		thisStress[0] += 0.5 * delta[0] * gradMultiple * delta[0] / distance;
+		thisStress[1] += 0.5 * delta[1] * gradMultiple * delta[0] / distance;
+		thisStress[2] += 0.5 * delta[0] * gradMultiple * delta[1] / distance;
+		thisStress[3] += 0.5 * delta[1] * gradMultiple * delta[1] / distance;
 		return epot;
 	}
 	return 0.;
 }
 
-inline __device__ double calcSegmentInteraction(const double* thisPos, const double* projPos, const double* otherPos, const double* previousPos, const double radSum, double* thisForce) {
-	double segment[MAXDIM];
+inline __device__ double calcSegmentInteraction(const double* thisPos, const double* projPos, const double* otherPos, const double* previousPos, const double radSum, double* thisForce, double* thisStress) {
+	double segment[MAXDIM], delta[MAXDIM];
 	auto epot = 0.0;
 	// compute segment and the overlap between its center and this vertex
 	auto cross = calcCross(thisPos, otherPos, previousPos);
@@ -1126,15 +1216,21 @@ inline __device__ double calcSegmentInteraction(const double* thisPos, const dou
 	if (gradMultiple != 0) {
 		auto sign = cross / absCross;
 		// this vertex
-	  	thisForce[0] += gradMultiple * sign * boxDistance(previousPos[1], otherPos[1], 1) / length;
-	  	thisForce[1] += gradMultiple * sign * boxDistance(otherPos[0], previousPos[0], 0) / length;
+	  	thisForce[0] += gradMultiple * sign * boxDistance(previousPos, otherPos, 1) / length;
+	  	thisForce[1] += gradMultiple * sign * boxDistance(otherPos, previousPos, 0) / length;
+		// collect interaction stress
+		getDelta(thisPos, projPos, delta);
+		thisStress[0] += delta[0] * gradMultiple * sign * boxDistance(previousPos, otherPos, 1) / length;
+		thisStress[1] += delta[1] * gradMultiple * sign * boxDistance(previousPos, otherPos, 1) / length;
+		thisStress[2] += delta[0] * gradMultiple * sign * boxDistance(otherPos, previousPos, 0) / length;
+		thisStress[3] += delta[1] * gradMultiple * sign * boxDistance(otherPos, previousPos, 0) / length;
 		return epot;
 	}
 	return 0.;
 }
 
-inline __device__ double calcSegment1Interaction(const double* thisPos, const double* projPos, const double* otherPos, const double* previousPos, const double radSum, double* otherForce) {
-	double segment[MAXDIM];
+inline __device__ double calcSegment1Interaction(const double* thisPos, const double* projPos, const double* otherPos, const double* previousPos, const double radSum, double* otherForce, double* otherStress) {
+	double segment[MAXDIM], delta[MAXDIM];
 	auto epot = 0.0;
 	// compute segment and the overlap between its center and this vertex
 	auto cross = calcCross(thisPos, otherPos, previousPos);
@@ -1145,16 +1241,22 @@ inline __device__ double calcSegment1Interaction(const double* thisPos, const do
 	if (gradMultiple != 0) {
 		auto sign = cross / absCross;
 		// other vertex
-	  	otherForce[0] += gradMultiple * (sign * boxDistance(thisPos[1], previousPos[1], 1) + absCross * boxDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length;
-	  	otherForce[1] += gradMultiple * (sign * boxDistance(previousPos[0], thisPos[0], 0) + absCross * boxDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length;
+		otherForce[0] += gradMultiple * (sign * boxDistance(thisPos, previousPos, 1) + absCross * boxDistance(previousPos, otherPos, 0) / (length * length)) / length;
+	  	otherForce[1] += gradMultiple * (sign * boxDistance(previousPos, thisPos, 0) + absCross * boxDistance(previousPos, otherPos, 1) / (length * length)) / length;
+		// collect interaction stress
+		getDelta(otherPos, projPos, delta);
+		otherStress[0] += delta[0] * gradMultiple * (sign * boxDistance(thisPos, previousPos, 1) + absCross * boxDistance(previousPos, otherPos, 0) / (length * length)) / length;
+		otherStress[1] += delta[1] * gradMultiple * (sign * boxDistance(thisPos, previousPos, 1) + absCross * boxDistance(previousPos, otherPos, 0) / (length * length)) / length;
+		otherStress[2] += delta[0] * gradMultiple * (sign * boxDistance(previousPos, thisPos, 0) + absCross * boxDistance(previousPos, otherPos, 1) / (length * length)) / length;
+		otherStress[3] += delta[1] * gradMultiple * (sign * boxDistance(previousPos, thisPos, 0) + absCross * boxDistance(previousPos, otherPos, 1) / (length * length)) / length;
 		return epot;
 	}
 	return 0.;
 }
 
 
-inline __device__ double calcSegment2Interaction(const double* thisPos, const double* projPos, const double* otherPos, const double* previousPos, const double radSum, double* previousForce) {
-	double segment[MAXDIM];
+inline __device__ double calcSegment2Interaction(const double* thisPos, const double* projPos, const double* otherPos, const double* previousPos, const double radSum, double* previousForce, double* previousStress) {
+	double segment[MAXDIM], delta[MAXDIM];
 	auto epot = 0.0;
 	// compute segment and the overlap between its center and this vertex
 	auto cross = calcCross(thisPos, otherPos, previousPos);
@@ -1165,23 +1267,28 @@ inline __device__ double calcSegment2Interaction(const double* thisPos, const do
 	if (gradMultiple != 0) {
 		auto sign = cross / absCross;
 		// previous vertex
-	  	previousForce[0] += gradMultiple * (sign * boxDistance(otherPos[1], thisPos[1], 1) - absCross * boxDistance(previousPos[0], otherPos[0], 0) / (length * length)) / length;
-	  	previousForce[1] += gradMultiple * (sign * boxDistance(thisPos[0], otherPos[0], 0) - absCross * boxDistance(previousPos[1], otherPos[1], 1) / (length * length)) / length;
-	  	return epot;
+	  	previousForce[0] += gradMultiple * (sign * boxDistance(otherPos, thisPos, 1) - absCross * boxDistance(previousPos, otherPos, 0) / (length * length)) / length;
+	  	previousForce[1] += gradMultiple * (sign * boxDistance(thisPos, otherPos, 0) - absCross * boxDistance(previousPos, otherPos, 1) / (length * length)) / length;
+	  	// collect interaction stress
+		getDelta(previousPos, projPos, delta);
+		previousStress[0] += delta[0] * gradMultiple * (sign * boxDistance(otherPos, thisPos, 1) - absCross * boxDistance(previousPos, otherPos, 0) / (length * length)) / length;
+		previousStress[1] += delta[1] * gradMultiple * (sign * boxDistance(otherPos, thisPos, 1) - absCross * boxDistance(previousPos, otherPos, 0) / (length * length)) / length;
+		previousStress[2] += delta[0] * gradMultiple * (sign * boxDistance(thisPos, otherPos, 0) - absCross * boxDistance(previousPos, otherPos, 1) / (length * length)) / length;
+		previousStress[3] += delta[1] * gradMultiple * (sign * boxDistance(thisPos, otherPos, 0) - absCross * boxDistance(previousPos, otherPos, 1) / (length * length)) / length;
+		return epot;
 	}
 	return 0.;
 }
 
 inline __device__ double getProjection2(const double* thisPos, const double* otherPos, const double* previousPos, const double* segment) {
 	auto length = calcNorm(segment);
-	return (boxDistance(previousPos[0], otherPos[0], 0) * boxDistance(previousPos[0], thisPos[0], 0) + boxDistance(previousPos[1], otherPos[1], 1) * boxDistance(previousPos[1], thisPos[1], 1)) / (length * length);
+	return (boxDistance(previousPos, otherPos, 0) * boxDistance(previousPos, thisPos, 0) + boxDistance(previousPos, otherPos, 1) * boxDistance(previousPos, thisPos, 1)) / (length * length);
 }
 
-// interaction force between vertices fully computed in parallel (work in progress)
-__global__ void kernelCalcVertexSmoothInteraction(const double* rad, const double* pos, double* force, double* energy) {
+// smooth interaction force between vertices of rigid particles fully computed in parallel (work in progress)
+__global__ void kernelCalcRigidSmoothInteraction(const double* rad, const double* pos, double* force, double* energy, double* intStress) {
 	long vertexId = blockIdx.x * blockDim.x + threadIdx.x; // vertexId is thisId
   	if (vertexId < d_numVertices) {
-		auto interaction = 0.0;
 		auto otherRad = 0.0;
 		double thisPos[MAXDIM], otherPos[MAXDIM], previousPos[MAXDIM], nextPos[MAXDIM], thisPreviousPos[MAXDIM], thisNextPos[MAXDIM];
 		double segment[MAXDIM], projPos[MAXDIM], nextProjPos[MAXDIM], thisProjPos[MAXDIM], thisNextProjPos[MAXDIM];
@@ -1192,6 +1299,7 @@ __global__ void kernelCalcVertexSmoothInteraction(const double* rad, const doubl
 		auto particleId = d_particleIdListPtr[vertexId];
 		// interaction between vertices of neighbor particles
 		for (long nListId = 0; nListId < d_maxNeighborListPtr[vertexId]; nListId++) {
+			auto interaction = 0.0;
       		if(extractNeighbor(vertexId, nListId, pos, rad, otherPos, otherRad)) {
 				auto otherId = d_neighborListPtr[vertexId*d_neighborListSize + nListId];
 				auto radSum = thisRad + otherRad;
@@ -1209,7 +1317,7 @@ __global__ void kernelCalcVertexSmoothInteraction(const double* rad, const doubl
 				getDelta(nextPos, otherPos, segment);
 				auto nextProj = getProjection2(thisPos, nextPos, otherPos, segment);
 				getProjectionPos(otherPos, segment, nextProjPos, nextProj);
-				auto nextProjDistance = calcDistance(projPos, thisPos);
+				auto nextProjDistance = calcDistance(nextProjPos, thisPos); // there might be a bug here
 				// compute projection of otherId on segment between thisPreviousId and vertexId
 				auto thisPreviousId = getPreviousId(vertexId, particleId);
 				getVertexPos(thisPreviousId, pos, thisPreviousPos);
@@ -1227,34 +1335,34 @@ __global__ void kernelCalcVertexSmoothInteraction(const double* rad, const doubl
 				// find the shortest distance between thisId and otherId
 				if(projDistance < nextProjDistance && projDistance < thisProjDistance && projDistance < thisNextProjDistance) {
 					if(proj > 0 && proj <= 1) {
-						interaction = calcSegment1Interaction(thisPos, projPos, otherPos, previousPos, radSum, &force[vertexId*d_nDim]);
+						interaction = calcSegment1Interaction(thisPos, projPos, otherPos, previousPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					} else if(proj > 1) {
-						interaction = calcSingleVertexInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+						interaction = calcSingleVertexInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					} else {
-						interaction = calcSingleVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim]);
+						interaction = calcSingleVertexInteraction(thisPos, previousPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					}
 				}
 				if(nextProjDistance < projDistance && nextProjDistance < thisProjDistance && nextProjDistance < thisNextProjDistance) {
 					if(nextProj > 0 && nextProj <= 1) {
-						interaction  = calcSegmentInteraction(thisPos, nextProjPos, nextPos, otherPos, radSum, &force[vertexId*d_nDim]);
+						interaction  = calcSegmentInteraction(thisPos, nextProjPos, nextPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					} else if(nextProj > 1) {
-						interaction = calcSingleVertexInteraction(thisPos, nextPos, radSum, &force[vertexId*d_nDim]);
+						interaction = calcSingleVertexInteraction(thisPos, nextPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					} else {
-						interaction = calcSingleVertexInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+						interaction = calcSingleVertexInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					}
 				}
 				if(thisProjDistance < projDistance && thisProjDistance < nextProjDistance && thisProjDistance < thisNextProjDistance) {
 					if(thisProj > 0 && thisProj <= 1) {
-						interaction = calcSegment1Interaction(otherPos, thisProjPos, thisPos, thisPreviousPos, radSum, &force[vertexId*d_nDim]);
+						interaction = calcSegment1Interaction(otherPos, thisProjPos, thisPos, thisPreviousPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					} else if(thisProj > 1) {
-						interaction = calcSingleVertexInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+						interaction = calcSingleVertexInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					}
 				}
 				if(thisNextProjDistance < projDistance && thisNextProjDistance < nextProjDistance && thisNextProjDistance < thisProjDistance) {
 					if(thisNextProj > 0 && thisNextProj <= 1) {
-						interaction = calcSegment2Interaction(otherPos, thisNextProjPos, thisNextPos, thisPos, radSum, &force[vertexId*d_nDim]);
+						interaction = calcSegment2Interaction(otherPos, thisNextProjPos, thisNextPos, thisPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					} else if(thisNextProj < 0) {
-						interaction = calcSingleVertexInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+						interaction = calcSingleVertexInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					}
 				}
 				energy[vertexId] += interaction;
@@ -1308,7 +1416,7 @@ __global__ void kernelCheckVertexLineInteraction(const double* pos, long* vertex
 }
 
 // particle-particle contact interaction
-__global__ void kernelCalcParticleInteraction(const double* pRad, const double* pPos, double* pForce, double* pEnergy) {
+__global__ void kernelCalcParticleInteraction(const double* pRad, const double* pPos, double* pForce, double* pEnergy, double* pStress) {
   	long particleId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (particleId < d_numParticles) {
     	auto otherRad = 0.0;
@@ -1326,16 +1434,19 @@ __global__ void kernelCalcParticleInteraction(const double* pRad, const double* 
 				auto radSum = thisRad + otherRad;
 				switch (d_simControl.potentialType) {
 					case simControlStruct::potentialEnum::harmonic:
-					pEnergy[particleId] += calcContactInteraction(thisPos, otherPos, radSum, &pForce[particleId*d_nDim]);
+					pEnergy[particleId] += calcContactInteraction(thisPos, otherPos, radSum, &pForce[particleId*d_nDim], &pStress[particleId*4]);
 					break;
 					case simControlStruct::potentialEnum::lennardJones:
-					pEnergy[particleId] += calcLJInteraction(thisPos, otherPos, radSum, &pForce[particleId*d_nDim]);
+					pEnergy[particleId] += calcLJInteraction(thisPos, otherPos, radSum, &pForce[particleId*d_nDim], &pStress[particleId*4]);
 					break;
 					case simControlStruct::potentialEnum::adhesive:
-					pEnergy[particleId] += calcAdhesiveInteraction(thisPos, otherPos, radSum, &pForce[particleId*d_nDim]);
+					pEnergy[particleId] += calcAdhesiveInteraction(thisPos, otherPos, radSum, &pForce[particleId*d_nDim], &pStress[particleId*4]);
 					break;
 					case simControlStruct::potentialEnum::wca:
-					pEnergy[particleId] += calcWCAInteraction(thisPos, otherPos, radSum, &pForce[particleId*d_nDim]);
+					pEnergy[particleId] += calcWCAInteraction(thisPos, otherPos, radSum, &pForce[particleId*d_nDim], &pStress[particleId*4]);
+					break;
+					case simControlStruct::potentialEnum::adhesivewca:
+					pEnergy[particleId] += calcAdhesiveWCAInteraction(thisPos, otherPos, radSum, &pForce[particleId*d_nDim], &pStress[particleId*4]);
 					break;
 				}
 			//if(particleId == 116 && d_partNeighborListPtr[particleId*d_partNeighborListSize + nListId] == 109) printf("particleId %ld \t neighbor: %ld \t overlap %e \n", particleId, d_partNeighborListPtr[particleId*d_partNeighborListSize + nListId], calcOverlap(thisPos, otherPos, radSum));
@@ -1535,7 +1646,7 @@ __global__ void kernelCalcVertexRoundWallInteraction(const double* rad, const do
 	}
 }
 
-__global__ void kernelCalcVertexForceTorque(const double* rad, const double* pos, const double* pPos, double* force, double* torque, double* energy) {
+__global__ void kernelCalcVertexForceTorque(const double* rad, const double* pos, const double* pPos, double* force, double* torque, double* energy, double* intStress) {
   	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
 		auto particleId = d_particleIdListPtr[vertexId];
@@ -1555,16 +1666,19 @@ __global__ void kernelCalcVertexForceTorque(const double* rad, const double* pos
 				auto radSum = thisRad + otherRad;
 				switch (d_simControl.potentialType) {
 					case simControlStruct::potentialEnum::harmonic:
-					energy[vertexId] += calcContactInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcContactInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 					case simControlStruct::potentialEnum::lennardJones:
-					energy[vertexId] += calcLJInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcLJInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 					case simControlStruct::potentialEnum::adhesive:
-					energy[vertexId] += calcAdhesiveInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcAdhesiveInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 					case simControlStruct::potentialEnum::wca:
-					energy[vertexId] += calcWCAInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim]);
+					energy[vertexId] += calcWCAInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
+					break;
+					case simControlStruct::potentialEnum::adhesivewca:
+					energy[vertexId] += calcAdhesiveWCAInteraction(thisPos, otherPos, radSum, &force[vertexId*d_nDim], &intStress[vertexId*4]);
 					break;
 				}
 			}
@@ -1636,6 +1750,16 @@ __global__ void kernelCalcParticleSmoothRigidForceEnergy(const double* force, co
 	}
 }
 
+__global__ void kernelSumVertexStress(const double* shapeStress, const double* intStress, double* stress) {
+  long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
+  if (vertexId < d_numVertices) {
+		stress[0] += shapeStress[vertexId*4] + intStress[vertexId*4];
+		stress[1] += shapeStress[vertexId*4 + 1] + intStress[vertexId*4 + 1];
+		stress[2] += shapeStress[vertexId*4 + 2] + intStress[vertexId*4 + 2];
+		stress[3] += shapeStress[vertexId*4 + 3] + intStress[vertexId*4 + 3];
+	}
+}
+
 __global__ void kernelCalcStressTensor(const double* perPStress, double* stress) {
   long particleId = blockIdx.x * blockDim.x + threadIdx.x;
   if (particleId < d_numParticles) {
@@ -1675,8 +1799,9 @@ __global__ void kernelCalcPerParticleStressTensor(const double* rad, const doubl
 					if (overlap > 0) {
 						gradMultiple = d_ec * overlap / radSum;
 						distance = calcDistance(thisPos, otherPos);
+						#pragma unroll (MAXDIM)
 						for (long dim = 0; dim < d_nDim; dim++) {
-							delta[dim] = boxDistance(otherPos[dim], thisPos[dim], dim);
+							delta[dim] = boxDistance(otherPos, thisPos, dim);
 							forces[dim] = gradMultiple * delta[dim] / (distance * radSum);
 							relativePos[dim] += delta[dim] * 0.5; // distance from center of mass to contact location
 						}
@@ -1710,11 +1835,12 @@ __global__ void kernelCalcParticleShape(const double* pos, double* length, doubl
 			nextId = getNextId(currentId, particleId);
 			previousId = getPreviousId(currentId, particleId); // added
 			segmentLength = 0.0;
+			#pragma unroll (MAXDIM)
 			for (long dim = 0; dim < d_nDim; dim++) {
-				delta[dim] = boxDistance(pos[nextId * d_nDim + dim], currentPos[dim], dim);
+				delta[dim] = boxDistance(&pos[nextId * d_nDim], &pos[currentId * d_nDim], dim);
 				nextPos[dim] = currentPos[dim] + delta[dim];
 				segmentLength += delta[dim] * delta[dim];
-				delta[dim] = boxDistance(pos[previousId * d_nDim + dim], currentPos[dim], dim); // added
+				delta[dim] = boxDistance(&pos[previousId * d_nDim], &pos[currentId * d_nDim], dim); // added
 				previousPos[dim] = currentPos[dim] + delta[dim]; // added + because previous is already before current (on a line delta is already negative)
 			}
 			getSegment(nextPos, currentPos, nextSegment);
@@ -1723,6 +1849,7 @@ __global__ void kernelCalcParticleShape(const double* pos, double* length, doubl
 			length[currentId] = sqrt(segmentLength);
 			perimeter[particleId] += length[currentId];
 			tempArea += currentPos[0] * nextPos[1] - nextPos[0] * currentPos[1];
+			#pragma unroll (MAXDIM)
 			for (long dim = 0; dim < d_nDim; dim++) {
 				currentPos[dim] = nextPos[dim];
 			}
@@ -1774,8 +1901,9 @@ __global__ void kernelScaleVertexPositions(const double* particlePos, double* po
 		auto firstVertex = d_firstVertexInParticleIdPtr[particleId];
 		auto lastVertex = firstVertex + d_numVertexInParticleListPtr[particleId];
 		for (long vertexId = firstVertex; vertexId < lastVertex; vertexId++) {
+			#pragma unroll (MAXDIM)
 			for (long dim = 0; dim < d_nDim; dim++) {
-				//distance[dim] = boxDistance(pos[vertexId * d_nDim + dim], particlePos[particleId * d_nDim + dim], d_boxSizePtr[dim]);
+				//distance[dim] = boxDistance(pos[vertexId * d_nDim + dim], particlePos[particleId * d_nDim + dim], dim);
 				distance[dim] = pos[vertexId * d_nDim + dim] - particlePos[particleId * d_nDim + dim];
       			pos[vertexId * d_nDim + dim] += (scale - 1) * distance[dim];
 			}
@@ -1809,6 +1937,7 @@ __global__ void kernelTranslateVertices(const double* pPos, const double* pLastP
 		auto firstVertex = d_firstVertexInParticleIdPtr[particleId];
 		auto lastVertex = firstVertex + d_numVertexInParticleListPtr[particleId];
 		for (long vertexId = firstVertex; vertexId < lastVertex; vertexId++) {
+			#pragma unroll (MAXDIM)
 			for (long dim = 0; dim < d_nDim; dim++) {
 				pos[vertexId * d_nDim + dim] += delta[dim];
 				// pbc check
@@ -1829,6 +1958,7 @@ __global__ void kernelRotateVertices(const double* pPos, const double* pAngle, c
 			getDelta(&pos[vertexId * d_nDim], &pPos[particleId * d_nDim], delta);
 			newPos[0] = delta[0] * cos(deltaAngle) - delta[1] * sin(deltaAngle);
 			newPos[1] = delta[0] * sin(deltaAngle) + delta[1] * cos(deltaAngle);
+			#pragma unroll (MAXDIM)
 			for (long dim = 0; dim < d_nDim; dim++) {
 				pos[vertexId * d_nDim + dim] += (newPos[dim] - delta[dim]);
 				// pbc check
@@ -1849,6 +1979,7 @@ __global__ void kernelTranslateAndRotateVertices(const double* pPos, const doubl
 			getDelta(&pos[vertexId * d_nDim], &pLastPos[particleId * d_nDim], relPos);
 			newPos[0] = relPos[0] * cos(deltaAngle) - relPos[1] * sin(deltaAngle);
 			newPos[1] = relPos[0] * sin(deltaAngle) + relPos[1] * cos(deltaAngle);
+			#pragma unroll (MAXDIM)
 			for (long dim = 0; dim < d_nDim; dim++) {
 				pos[vertexId * d_nDim + dim] = pPos[particleId * d_nDim + dim] + newPos[dim];
 				//pos[vertexId * d_nDim + dim] -= round(pos[vertexId * d_nDim + dim] / d_boxSizePtr[dim]) * d_boxSizePtr[dim];
@@ -1990,7 +2121,7 @@ __global__ void kernelCalcNeighborForces(const double* pos, const double *rad, d
 	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
   	if (vertexId < d_numVertices) {
     	double otherRad, radSum, overlap, gradMultiple, distance;
-		double thisPos[MAXDIM], otherPos[MAXDIM];
+		double thisPos[MAXDIM], otherPos[MAXDIM], delta[MAXDIM];
 		// we don't zero out the force because we always call this function
 		// after kernelCalcShapeForceEnergy where the force is zeroed out
 		getVertexPos(vertexId, pos, thisPos);
@@ -2001,9 +2132,10 @@ __global__ void kernelCalcNeighborForces(const double* pos, const double *rad, d
         		radSum = thisRad + otherRad;
 				overlap = calcOverlap(thisPos, otherPos, radSum), gradMultiple, distance;
 				gradMultiple = (overlap > 0) * d_ec * overlap / radSum;
-				distance = calcDistance(thisPos, otherPos);
+				distance = calcDeltaAndDistance(thisPos, otherPos, delta);
 			  	for (long dim = 0; dim < d_nDim; dim++) {
-			    	neighforce[vertexId*d_neighborListSize + nListId*d_nDim+dim] += gradMultiple * boxDistance(thisPos[dim], otherPos[dim], dim) / distance;
+			    	neighforce[vertexId*d_neighborListSize + nListId*d_nDim+dim] += gradMultiple * delta[dim] / distance;
+			    	//neighforce[vertexId*d_neighborListSize + nListId*d_nDim+dim] += gradMultiple * boxDistance(thisPos[dim], otherPos[dim], dim) / distance;
 				}
 			}
     	}
