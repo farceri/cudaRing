@@ -22,9 +22,10 @@ using std::string;
 struct simControlStruct {
   enum class simulationEnum {gpu, cpu, omp} simulationType;
   enum class geometryEnum {normal, fixedBox, fixedSides, roundBox, leesEdwards} geometryType;
-  enum class particleEnum {passive, active, activeShape, activeTension} particleType;
+  enum class particleEnum {passive, active, activeTension, activeAdhesion, activeShape} particleType;
   enum class shapeEnum {deformable, rigid} shapeType;
   enum class tensionEnum {off, on} tensionType;
+  enum class adhesionEnum {off, on} adhesionType; // this switch is for mutual adhesion, not to be confused with adhesive potentialType
   enum class noiseEnum {langevin, baoab, brownian, drivenBrownian} noiseType;
   enum class potentialEnum {harmonic, lennardJones, adhesive, wca, adhesivewca} potentialType;
   enum class interactionEnum {vertexVertex, vertexSmooth, cellSmooth, all} interactionType;
@@ -86,10 +87,12 @@ public:
   double eb; // bending
   double ec; // interaction
   double g0; // tension
-  // adhesion constants
-  double l1, l2, eAdh;
   // active tension parameters
   double g0Tau, g0Delta;
+  // adhesion constants
+  double l1, l2, eAdh;
+  // active adhesion parameters
+  double w0Tau, w0Delta;
   // self-propulsion parameters
   double driving, taup;
   // active shape parameters
@@ -117,6 +120,8 @@ public:
   thrust::device_vector<double> d_theta0;
   thrust::device_vector<double> d_gamma0;
   thrust::device_vector<double> d_g0Rest;
+  thrust::device_vector<double> d_omega0;
+  thrust::device_vector<double> d_w0Rest;
   thrust::device_vector<double> d_l0Rest;
   thrust::device_vector<double> d_l0Vel;
 
@@ -252,6 +257,9 @@ public:
   void setTensionType(simControlStruct::tensionEnum tensionType_);
   simControlStruct::tensionEnum getTensionType();
 
+  void setAdhesionType(simControlStruct::adhesionEnum adhesionType_);
+  simControlStruct::adhesionEnum getAdhesionType();
+
   void setNoiseType(simControlStruct::noiseEnum noiseType_);
 	simControlStruct::noiseEnum getNoiseType();
 
@@ -315,6 +323,12 @@ public:
 
   void setRestTensions(thrust::host_vector<double> &g0Rest_);
   thrust::host_vector<double> getRestTensions();
+
+  void setAdhesions(thrust::host_vector<double> &omega0_);
+  thrust::host_vector<double> getAdhesions();
+
+  void setRestAdhesions(thrust::host_vector<double> &w0Rest_);
+  thrust::host_vector<double> getRestAdhesions();
 
   thrust::host_vector<double> getSegmentLengths();
 
@@ -556,21 +570,19 @@ public:
   // force and energy
   void setEnergyCosts(double ea_, double el_, double eb_, double ec_);
 
-  void setAdhesionConstants(double eAdh_, double rAdh_);
+  void setAdhesionConstants(double l1_, double l2_);
+
+  void setAdhesion(double eAdh_, double rAdh_, bool initAdhesion_ = true); // this is to be used with WCA interaction
 
   void setActiveAdhesionParams(double wTau_, double wDelta_);
 
   void getActiveAdhesionParams(double &wTau_, double &wDelta_);
 
-  void initializeAdhesions();
-
-  void setTension(double g0_);
+  void setTension(double g0_, bool initTension_ = true);
 
   void setActiveTensionParams(double g0Tau_, double g0Delta_);
 
   void getActiveTensionParams(double &g0Tau_, double &g0Delta_);
-
-  void initializeTensions();
 
   void setSelfPropulsionParams(double driving_, double taup_);
 

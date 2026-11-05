@@ -5,8 +5,8 @@
 // Include C++ header files
 
 // Example usage
-// ./runNVE /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02> <maxStep>=1e07 <initialStep>=0 
-// <numParticles>=256 <potType=wca <intType>=smooth <tensionType>=off <mode>=0
+// ./runNVE /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02> <magn>=10 <maxStep>=1e07 <initialStep>=0 
+// <numParticles>=256 <potType>=wca <smoothType>=smooth <tensionType>=0 <mode>=0
 
 #include "include/DPM2D.h"
 #include "include/FileIO.h"
@@ -33,14 +33,14 @@ int main(int argc, char **argv) {
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
   bool readState = true, logSave = false, linSave = true, saveFinal = true;
   // input variables
-  std::string inDir = argv[1], potType = argv[7], intType = argv[8], tensionType = argv[9], mode = argv[10];
-  double timeStep = atof(argv[2]), Tinject = atof(argv[3]);
-  long maxStep = atof(argv[4]), initialStep = atof(argv[5]), numParticles = atol(argv[6]);
+  std::string inDir = argv[1], potType = argv[8], smoothType = argv[9], tensionType = argv[10], mode = argv[11];
+  double timeStep = atof(argv[2]), Tinject = atof(argv[3]), magn = atof(argv[4]);
+  long maxStep = atof(argv[5]), initialStep = atof(argv[6]), numParticles = atol(argv[7]);
   // other variables
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10); 
-  double cutDistance, cutoff = 0.5, timeUnit = 0, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10;
+  double cutDistance, cutoff = 0.5, timeUnit, gammaUnit, sigma, size, waveQ;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, eAdh = 0.1, Adhcut = 0.4;
   std::string outDir, energyFile, currentDir, dirSample, whichDynamics;
   // set simulation mode
   if(mode == "change") {
@@ -72,19 +72,27 @@ int main(int argc, char **argv) {
   } else if(potType == "wca") {
     dpm.setPotentialType(simControlStruct::potentialEnum::wca);
     whichDynamics = "nve-wca";
+  } else if(potType == "adhesivewca") {
+    dpm.setPotentialType(simControlStruct::potentialEnum::adhesivewca);
+    whichDynamics = "nve-adh";
   } else {
     cout << "Setting default harmonic potential" << endl;
     whichDynamics = "nve";
   }
   if(tensionType == "tension") {
+    g0 = magn;
     dpm.setTensionType(simControlStruct::tensionEnum::on);
-    whichDynamics = whichDynamics + "-tension/";
-    cout << "Tension is ON" << endl;
+    whichDynamics = whichDynamics + "-g" + argv[4] + "/";
+    cout << "Tension is ON, g0: " << g0 << endl;
+  } else if(tensionType == "adhesion") {
+    eAdh = magn;
+    dpm.setAdhesionType(simControlStruct::adhesionEnum::on);
+    whichDynamics = whichDynamics + "-w" + argv[4] + "/";
+    cout << "Adhesion is ON, eAdh: " << eAdh << endl;
   } else {
     whichDynamics = whichDynamics + "/";
-    cout << "Tension is OFF" << endl;
   }
-  if(intType == "smooth") {
+  if(smoothType == "smooth") {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
     dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
   }
@@ -122,7 +130,7 @@ int main(int argc, char **argv) {
   cout << "inDir: " << inDir << endl << "outDir: " << outDir << endl;
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   dpm.setEnergyCosts(ea, el, eb, ec);
-  if(tensionType == "tension") dpm.setTension(g0);
+  numVertices = dpm.getNumVertices();
   if(readState == true) {
     ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
   }
@@ -132,14 +140,20 @@ int main(int argc, char **argv) {
 
   // initialize simulation
   sigma = dpm.getMeanParticleSize();
-  timeUnit = sigma / sqrt(ec);//epsilon and mass are 1 sqrt(m sigma^2 / epsilon)
+  timeUnit = sigma / sqrt(ec); //epsilon and mass are 1 sqrt(m sigma^2 / epsilon)
   timeStep = dpm.setTimeStep(timeStep * timeUnit);
   cout << "Time step: " << timeStep << " sigma: " << sigma << " Tinject: " << Tinject << endl;
-  numVertices = dpm.getNumVertices();
-  dpm.initNVE(Tinject, readState);
-  if(readAndMakeNewDir == true) {
-    dpm.adjustTemperature(Tinject);
+  if(tensionType == "tension") {
+    gammaUnit = ec / sigma;
+    g0 *= gammaUnit;
+    dpm.setTension(g0);
+  } else if(tensionType == "adhesion") {
+    dpm.setAdhesionConstants(eAdh, Adhcut); // ec = sigma = 1
   }
+
+  // initialize integration scheme
+  dpm.initNVE(Tinject, readState);
+  if(readAndMakeNewDir == true) dpm.adjustTemperature(Tinject);
   size = 2 * dpm.getMeanVertexRadius();
   cutDistance = dpm.setDisplacementCutoff(cutoff, size);
   dpm.calcNeighbors(cutDistance);

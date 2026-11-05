@@ -56,6 +56,7 @@ DPM2D::DPM2D(long nParticles, long dim, long nVertexPerParticle) {
 	simControl.particleType = simControlStruct::particleEnum::passive;
 	simControl.shapeType = simControlStruct::shapeEnum::deformable;
 	simControl.tensionType = simControlStruct::tensionEnum::off;
+	simControl.adhesionType = simControlStruct::adhesionEnum::off;
 	simControl.noiseType = simControlStruct::noiseEnum::langevin;
 	simControl.potentialType = simControlStruct::potentialEnum::harmonic;
 	simControl.interactionType = simControlStruct::interactionEnum::vertexVertex;
@@ -140,6 +141,14 @@ void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
     default:
     break;
   }
+  switch (simControl.adhesionType) {
+    case simControlStruct::adhesionEnum::on:
+    d_omega0.resize(numVertices_);
+    thrust::fill(d_omega0.begin(), d_omega0.end(), double(0));
+    break;
+    default:
+    break;
+  }
   // set dynamical variables for active particles
   switch (simControl.particleType) {
     case simControlStruct::particleEnum::active:
@@ -152,6 +161,13 @@ void DPM2D::initShapeVariables(long numVertices_, long numParticles_) {
     d_randAngle.resize(numVertices_);
     //d_randAngle.resize(numParticles_);
     thrust::fill(d_g0Rest.begin(), d_g0Rest.end(), double(0));
+    thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
+    break;
+    case simControlStruct::particleEnum::activeAdhesion:
+    d_w0Rest.resize(numVertices_);
+    d_randAngle.resize(numVertices_);
+    //d_randAngle.resize(numParticles_);
+    thrust::fill(d_w0Rest.begin(), d_w0Rest.end(), double(0));
     thrust::fill(d_randAngle.begin(), d_randAngle.end(), double(0));
     break;
     case simControlStruct::particleEnum::activeShape:
@@ -416,8 +432,11 @@ void DPM2D::setParticleType(simControlStruct::particleEnum particleType_) {
   } else if(simControl.particleType == simControlStruct::particleEnum::activeTension) {
     setTensionType(simControlStruct::tensionEnum::on);
     cout << "DPM2D::setParticleType: particleType: activeTension" << endl;
+  } else if(simControl.particleType == simControlStruct::particleEnum::activeAdhesion) {
+    setAdhesionType(simControlStruct::adhesionEnum::on);
+    cout << "DPM2D::setParticleType: particleType: activeAdhesion" << endl;
   } else {
-    cout << "DPM2D::setParticleType: please specify valid particleType: passive, active, activeShape or activeTension" << endl;
+    cout << "DPM2D::setParticleType: please specify valid particleType: passive, active, activeShape, activeTension or activeAdhesion" << endl;
   }
 	syncSimControlToDevice();
 }
@@ -462,6 +481,24 @@ simControlStruct::tensionEnum DPM2D::getTensionType() {
 	return simControl.tensionType;
 }
 
+void DPM2D::setAdhesionType(simControlStruct::adhesionEnum adhesionType_) {
+	simControl.adhesionType = adhesionType_;
+  if(simControl.adhesionType == simControlStruct::adhesionEnum::on) {
+    cout << "DPM2D::setAdhesionType: adhesionType: on - only works with WCA potential" << endl;
+    setPotentialType(simControlStruct::potentialEnum::wca);
+  } else if(simControl.adhesionType == simControlStruct::adhesionEnum::off) {
+    cout << "DPM2D::setAdhesionType: adhesionType: off" << endl;
+  } else {
+    cout << "DPM2D::setAdhesionType: please specify valid adhesionType: on or off" << endl;
+  }
+	syncSimControlToDevice();
+}
+
+simControlStruct::adhesionEnum DPM2D::getAdhesionType() {
+	syncSimControlFromDevice();
+	return simControl.adhesionType;
+}
+
 void DPM2D::setNoiseType(simControlStruct::noiseEnum noiseType_) {
 	simControl.noiseType = noiseType_;
   if(simControl.noiseType == simControlStruct::noiseEnum::langevin) {
@@ -495,7 +532,7 @@ void DPM2D::setPotentialType(simControlStruct::potentialEnum potentialType_) {
     cout << "DPM2D::setPotentialType: potentialType: wca" << endl;
   } else if(simControl.potentialType == simControlStruct::potentialEnum::adhesivewca) {
     cout << "DPM2D::setPotentialType: potentialType: adhesivewca" << endl;
-  }else {
+  } else {
     cout << "DPM2D::setPotentialType: please specify valid potentialType: harmonic, lennardJones, adhesive, wca or adhesivewca" << endl;
   }
 	syncSimControlToDevice();
@@ -783,6 +820,26 @@ thrust::host_vector<double> DPM2D::getRestTensions() {
   thrust::host_vector<double> g0RestFromDevice;
   g0RestFromDevice = d_g0Rest;
   return g0RestFromDevice;
+}
+
+void DPM2D::setAdhesions(thrust::host_vector<double> &omega0_) {
+  d_omega0 = omega0_;
+}
+
+thrust::host_vector<double> DPM2D::getAdhesions() {
+  thrust::host_vector<double> omega0FromDevice;
+  omega0FromDevice = d_omega0;
+  return omega0FromDevice;
+}
+
+void DPM2D::setRestAdhesions(thrust::host_vector<double> &w0Rest_) {
+  d_w0Rest = w0Rest_;
+}
+
+thrust::host_vector<double> DPM2D::getRestAdhesions() {
+  thrust::host_vector<double> w0RestFromDevice;
+  w0RestFromDevice = d_w0Rest;
+  return w0RestFromDevice;
 }
 
 thrust::host_vector<double> DPM2D::getSegmentLengths() {
@@ -1370,11 +1427,13 @@ double DPM2D::setDisplacementCutoff(double cutoff_, double size_) {
     cutDistance = WCAcut;
     break;
     case simControlStruct::potentialEnum::adhesive:
-    cutDistance = 1 + l2;
-    break;
     case simControlStruct::potentialEnum::adhesivewca:
     cutDistance = 1 + l2;
     break;
+  }
+  if(simControl.particleType == simControlStruct::particleEnum::activeAdhesion) {
+    double adhesionCut = 1 + l2;
+    cutDistance = std::max(cutDistance, adhesionCut);
   }
   cutDistance += cutoff_;
   cutoff = cutoff_ * size_;
@@ -2024,13 +2083,70 @@ void DPM2D::setEnergyCosts(double ea_, double el_, double eb_, double ec_) {
   cudaMemcpyToSymbol(d_ec, &ec, sizeof(ec));
 }
 
-void DPM2D::setTension(double g0_) {
+void DPM2D::setAdhesionConstants(double l1_, double l2_) {
+  l1 = l1_;
+  // compute l1 by imposing symmetric triangle attractive potential
+  l2 = l2_;
+  cudaMemcpyToSymbol(d_l1, &l1, sizeof(l1));
+  cudaMemcpyToSymbol(d_l2, &l2, sizeof(l2));
+}
+
+// this is to be used with WCA interaction
+void DPM2D::setAdhesion(double eAdh_, double rAdh_, bool initAdhesion_) {
+  eAdh = eAdh_;
+  l2 = rAdh_;
+  // compute l1 by imposing symmetric triangle attractive potential
+  l1 = (WCAcut + (1 + l2))/2 - 1;
+  cudaMemcpyToSymbol(d_l1, &l1, sizeof(l1));
+  cudaMemcpyToSymbol(d_l2, &l2, sizeof(l2));
+  cudaMemcpyToSymbol(d_eAdh, &eAdh, sizeof(eAdh));
+  cout << "DPM2D::setAdhesionConstants::eAdh: " << eAdh << " potential goes to zero at: " << l2 << " starts at: " << l1;
+  cout << " and is minimum at: " << (l2 - l1)/2 << endl;
+  if(initAdhesion_ == true) {
+    thrust::fill(d_omega0.begin(), d_omega0.end(), double(eAdh));
+    cout << "DPM2D::setAdhesion: setting d_omega0 equal to eAdh" << endl;
+    switch (simControl.particleType) {
+      case simControlStruct::particleEnum::activeAdhesion:
+      d_w0Rest = d_omega0;
+      cout << "DPM2D::setAdhesion: setting d_w0Rest equal to d_omega0" << endl;
+      break;
+      default:
+      break;
+    }
+  }
+}
+
+void DPM2D::setActiveAdhesionParams(double w0Tau_, double w0Delta_) {
+  w0Tau = w0Tau_;
+  w0Delta = w0Delta_;
+  cout << "DPM2D::setActiveAdhesionParams:: w0Tau: " << w0Tau << " w0Delta: " << w0Delta << endl;
+}
+
+void DPM2D::getActiveAdhesionParams(double &w0Tau_, double &w0Delta_) {
+  w0Tau_ = w0Tau;
+  w0Delta_ = w0Delta;
+  //cout << "DPM2D::getActiveAdhesionParams:: w0Tau: " << w0Tau_ << " w0Delta: " << w0Delta_ << endl;
+}
+
+void DPM2D::setTension(double g0_, bool initTension_) {
   // readState_ is defaulted to false so when tensionType is on and activeTension is off the gamma0 are set here
   if(g0_ < 0) {
     g0_ = 1;
     cout << "DPM2D::setTension: input tension is negative, setting it to default value 1" << endl;
   }
   g0 = g0_;
+  if(initTension_ == true) {
+    thrust::fill(d_gamma0.begin(), d_gamma0.end(), double(g0));
+    cout << "DPM2D::setTension: setting d_gamma0 equal to g0" << endl;
+    switch (simControl.particleType) {
+      case simControlStruct::particleEnum::activeTension:
+      d_g0Rest = d_gamma0;
+      cout << "DPM2D::setTension: setting d_g0Rest equal to d_gamma0" << endl;
+      break;
+      default:
+      break;
+    }
+  }
 }
 
 void DPM2D::setActiveTensionParams(double g0Tau_, double g0Delta_) {
@@ -2050,16 +2166,10 @@ void DPM2D::getActiveTensionParams(double &g0Tau_, double &g0Delta_) {
   //cout << "DPM2D::getActiveTensionParams:: g0Tau: " << g0Tau_ << " g0Delta: " << g0Delta_ << endl;
 }
 
-void DPM2D::initializeTensions() { // only works in 2D
-  thrust::fill(d_gamma0.begin(), d_gamma0.end(), double(g0));
-  d_g0Rest = d_gamma0;
-  cout << "DPM2D::initializeTensions: setting d_gamma0 and d_g0Rest equal to g0" << endl;
-}
-
 void DPM2D::setSelfPropulsionParams(double driving_, double taup_) {
   driving = driving_;
   taup = taup_;
-  //cout << "DPM2D::setSelfPropulsionParams:: driving: " << driving << " taup: " << taup << endl;
+  cout << "DPM2D::setSelfPropulsionParams:: driving: " << driving << " taup: " << taup << endl;
 }
 
 void DPM2D::getSelfPropulsionParams(double &driving_, double &taup_) {
@@ -2088,18 +2198,6 @@ void DPM2D::getActiveShapeParams(double &l0Tau_, double &l0Delta_, double &kl0_)
 void DPM2D::setBoxEnergyCost(double ew_) {
   ew = ew_;
   cudaMemcpyToSymbol(d_ew, &ew, sizeof(ew));
-}
-
-void DPM2D::setAdhesionConstants(double eAdh_, double rAdh_) {
-  eAdh = eAdh_;
-  l2 = rAdh_;
-  // compute l1 by imposing symmetric triangle attractive potential
-  l1 = (WCAcut + (1 + l2))/2 - 1;
-  cudaMemcpyToSymbol(d_l1, &l1, sizeof(l1));
-  cudaMemcpyToSymbol(d_l2, &l2, sizeof(l2));
-  cudaMemcpyToSymbol(d_eAdh, &eAdh, sizeof(eAdh));
-  cout << "DPM2D::setAdhesionConstants::eAdh: " << eAdh << " potential goes to zero at: " << l2 << " starts at: " << l1;
-  cout << " and is minimum at: " << (l2 - l1)/2 << endl;
 }
 
 void DPM2D::setLJcutoff(double LJcutoff_) {
@@ -2266,7 +2364,7 @@ void DPM2D::updateActiveTensionByBlocks() {
   const long *firstId = thrust::raw_pointer_cast(&d_firstVertexInParticleId[0]);
   const long *numInParticle = thrust::raw_pointer_cast(&d_numVertexInParticleList[0]);
 
-  auto integrateActiveTension = [=] __device__ (long vId) {
+  auto integrateActiveTensionByBlocks = [=] __device__ (long vId) {
     long pId = pIdList[vId];
     long first = firstId[pId];
     long nv = numInParticle[pId];
@@ -2280,7 +2378,32 @@ void DPM2D::updateActiveTensionByBlocks() {
     gamma0[vId] = fmax(gamma0[vId], 0.0);
   };
 
-  thrust::for_each(r, r + numVertices, integrateActiveTension);
+  thrust::for_each(r, r + numVertices, integrateActiveTensionByBlocks);
+}
+
+void DPM2D::updateActiveAdhesion() {
+  // update rest length
+  double s_dt(dt);
+  double s_w0Tau(w0Tau);
+  double s_w0Noise(w0Delta * sqrt(2. * dt / w0Tau));
+  //double s_w0Noise(sqrt(2. * w0Delta * dt));
+  auto r = thrust::counting_iterator<long>(0);
+  thrust::counting_iterator<long> index_sequence_begin(lrand48());
+  thrust::transform(index_sequence_begin, index_sequence_begin + numVertices, d_randAngle.begin(), gaussNum(0.f,s_w0Noise));
+  //thrust::transform(index_sequence_begin, index_sequence_begin + numParticles, d_randAngle.begin(), gaussNum(0.f,s_w0Noise));
+  double *omega0 = thrust::raw_pointer_cast(&d_omega0[0]);
+  const double *w0Rest = thrust::raw_pointer_cast(&d_w0Rest[0]);
+  const double *randAngle = thrust::raw_pointer_cast(&d_randAngle[0]);
+  //const long *pIdList = thrust::raw_pointer_cast(&d_particleIdList[0]);
+
+  auto integrateActiveAdhesion = [=] __device__ (long vId) {
+    //long pId = pIdList[vId];
+		omega0[vId] += randAngle[vId] - (omega0[vId] - w0Rest[vId]) * s_dt / s_w0Tau;
+    // Heaviside clip: prevent negative (expansive) adhesion
+    omega0[vId] = fmax(omega0[vId], 0.0);
+  };
+
+  thrust::for_each(r, r + numVertices, integrateActiveAdhesion);
 }
 
 void DPM2D::updateRestLength() {
@@ -2349,6 +2472,17 @@ void DPM2D::calcForceEnergyGPU() {
     case simControlStruct::particleEnum::activeTension:
     updateActiveTension();
     //updateActiveTensionByBlocks();
+    break;
+    case simControlStruct::particleEnum::activeAdhesion:
+    updateActiveAdhesion();
+    break;
+    default:
+    break;
+  }
+  const double *omega0 = thrust::raw_pointer_cast(&d_omega0[0]);
+  switch (simControl.adhesionType) {
+    case simControlStruct::adhesionEnum::on:
+    kernelAddVertexAdhesion<<<dimGrid, dimBlock>>>(rad, pos, omega0, force, energy, intStress);
     break;
     default:
     break;

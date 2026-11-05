@@ -439,7 +439,7 @@ public:
     saveParams << "eb" << "\t" << dpm_->eb << endl;
     saveParams << "ec" << "\t" << dpm_->ec << endl;
     if(dpm_->simControl.tensionType == simControlStruct::tensionEnum::on) saveParams << "g0" << "\t" << dpm_->g0 << endl;
-    if(dpm_->simControl.potentialType == simControlStruct::potentialEnum::adhesivewca) {
+    if(dpm_->simControl.adhesionType == simControlStruct::adhesionEnum::on || dpm_->simControl.potentialType == simControlStruct::potentialEnum::adhesive) {
       saveParams << "eAdh" << "\t" << dpm_->eAdh << endl;
       saveParams << "rAdh" << "\t" << dpm_->l2 << endl;
     } 
@@ -467,6 +467,9 @@ public:
     } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
       save1DFile(dirName + "tensions.dat", dpm_->getTensions());
       save1DFile(dirName + "restTensions.dat", dpm_->getRestTensions());
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeAdhesion) {
+      save1DFile(dirName + "adhesions.dat", dpm_->getAdhesions());
+      save1DFile(dirName + "restAdhesions.dat", dpm_->getRestAdhesions());
     }
     save2DFile(dirName + "shapes.dat", dpm_->getParticleShapes(), 3); // 3 is for area, perimeter and shape parameter
   }
@@ -523,6 +526,16 @@ public:
         dpm_->setRestTensions(g0Rest_);
         cout << "FileIO::readDeformableState: read tensions and rest tensions from file" << endl;
       }
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeAdhesion) {
+      if(initTensions == false) {
+        thrust::host_vector<double> omega0_(numVertices_);
+        omega0_ = read1DFile(dirName + "adhesions.dat", numVertices_);
+        dpm_->setAdhesions(omega0_);
+        thrust::host_vector<double> w0Rest_(numVertices_);
+        w0Rest_ = read1DFile(dirName + "restAdhesions.dat", numVertices_);
+        dpm_->setRestAdhesions(w0Rest_);
+        cout << "FileIO::readDeformableState: read adhesions and rest adhesions from file" << endl;
+      }
     }
   }
 
@@ -539,7 +552,7 @@ public:
     save2DFile(dirName + "velocities.dat", dpm_->getVertexVelocities(), dpm_->nDim);
     save2DFile(dirName + "particlePos.dat", dpm_->getParticlePositions(), dpm_->nDim);
     save2DFile(dirName + "shapes.dat", dpm_->getParticleShapes(), 3); // 3 is for area, perimeter and shape parameter
-    if(dpm_->simControl.tensionType == simControlStruct::tensionEnum::on) {
+    if(dpm_->simControl.tensionType == simControlStruct::tensionEnum::on || dpm_->simControl.adhesionType == simControlStruct::adhesionEnum::on) {
     save1DFile(dirName + "segments.dat", dpm_->getSegmentLengths());
     }
     if(dpm_->simControl.particleType == simControlStruct::particleEnum::active) {
@@ -547,6 +560,9 @@ public:
     } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
       save1DFile(dirName + "restTensions.dat", dpm_->getRestTensions());
       save1DFile(dirName + "tensions.dat", dpm_->getTensions());
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeAdhesion) {
+      save1DFile(dirName + "restAdhesions.dat", dpm_->getRestAdhesions());
+      save1DFile(dirName + "adhesions.dat", dpm_->getAdhesions());
     }
   }
 
@@ -591,6 +607,18 @@ public:
       saveParams << "taup" << "\t" << taup << endl;
       saveParams << "f0" << "\t" << driving << endl;
       saveParams << "Pe" << "\t" << Pe << endl;
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
+      double g0Tau, g0Delta;
+      dpm_->getActiveTensionParams(g0Tau, g0Delta);
+      saveParams << "tg0" << "\t" << g0Tau << endl;
+      saveParams << "Dg0" << "\t" << g0Delta << endl;
+      saveParams << "Pe" << "\t" << Pe << endl;
+    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeAdhesion) {
+      double w0Tau, w0Delta;
+      dpm_->getActiveAdhesionParams(w0Tau, w0Delta);
+      saveParams << "tw0" << "\t" << w0Tau << endl;
+      saveParams << "Dw0" << "\t" << w0Delta << endl;
+      saveParams << "Pe" << "\t" << Pe << endl;
     } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeShape) {
       double l0Tau, l0Delta, kl0;
       dpm_->getActiveShapeParams(l0Tau, l0Delta, kl0);
@@ -598,13 +626,7 @@ public:
       saveParams << "Dl0" << "\t" << l0Delta << endl;
       saveParams << "kl0" << "\t" << kl0 << endl;
       saveParams << "Pe" << "\t" << Pe << endl;
-    } else if(dpm_->simControl.particleType == simControlStruct::particleEnum::activeTension) {
-      double g0Tau, g0Delta;
-      dpm_->getActiveTensionParams(g0Tau, g0Delta);
-      saveParams << "tg0" << "\t" << g0Tau << endl;
-      saveParams << "Dg0" << "\t" << g0Delta << endl;
-      saveParams << "Pe" << "\t" << Pe << endl;
-    }
+    } 
     saveParams.close();
   }
 

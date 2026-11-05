@@ -5,8 +5,8 @@
 // Include C++ header files
 
 // Example usage
-// ./runActive /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02 <damping>=1e02 <taup>=1e-01 <driving>=1e02
-// <maxStep>=1e07 <initialStep>=0 <numParticles>=256 <mode>=0
+// ./runActive /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02 <damping>=1e02 <magn>=10 <taup>=1e-01 <driving>=1e02
+// <maxStep>=1e07 <initialStep>=0 <numParticles>=256 <tensionType>=0 <mode>=0
 
 #include "include/DPM2D.h"
 #include "include/FileIO.h"
@@ -33,14 +33,15 @@ int main(int argc, char **argv) {
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
   bool initAngles = false, readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
   // input variables
-  std::string inDir = argv[1], tensionType = argv[10], adhesionType = argv[11], mode = argv[12];
-  double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]), tp = atof(argv[5]), driving = atof(argv[6]);
-  long maxStep = atof(argv[7]), initialStep = atof(argv[8]), numParticles = atol(argv[9]);
+  std::string inDir = argv[1], tensionType = argv[11], mode = argv[12];
+  double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]);
+  double magn = atof(argv[5]), tp = atof(argv[6]), driving = atof(argv[7]);
+  long maxStep = atof(argv[8]), initialStep = atof(argv[9]), numParticles = atol(argv[10]);
   // other variables
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double cutDistance, cutoff = 0.5, timeUnit, forceUnit, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, Pe, eAdh = 0.1, Adhcut = 0.4;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, Pe, g0 = 10, eAdh = 0.1, Adhcut = 0.4;
   std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "active/";
   // set simulation mode
   if(mode == "change") {
@@ -66,19 +67,27 @@ int main(int argc, char **argv) {
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
   dpm.setParticleType(simControlStruct::particleEnum::active);
   dpm.setNoiseType(simControlStruct::noiseEnum::langevin);
-  if(adhesionType == "adhesion") dpm.setPotentialType(simControlStruct::potentialEnum::adhesivewca);
-  else dpm.setPotentialType(simControlStruct::potentialEnum::wca);
+  dpm.setPotentialType(simControlStruct::potentialEnum::wca);
+  if(tensionType == "tension") {
+    g0 = magn;
+    dpm.setTensionType(simControlStruct::tensionEnum::on);
+    whichDynamics = whichDynamics + "-g" + argv[5] + "/";
+    cout << "Tension is ON, g0: " << g0 << endl;
+  } else if(tensionType == "adhesion") {
+    eAdh = magn;
+    dpm.setAdhesionType(simControlStruct::adhesionEnum::on);
+    whichDynamics = whichDynamics + "-w" + argv[5] + "/";
+    cout << "Adhesion is ON, eAdh: " << eAdh << endl;
+  } else {
+    whichDynamics = whichDynamics + "/";
+  }
   if(smooth) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
     dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
   }
-  if(tensionType == "tension") {
-    dpm.setTensionType(simControlStruct::tensionEnum::on);
-    cout << "Tension is ON" << endl;
-  }
 
   // set input and output
-  dirSample = whichDynamics + "tp" + argv[5] + "-f0" + argv[6] + "/";
+  dirSample = whichDynamics + "tp" + argv[6] + "-f0" + argv[7] + "/";
   ioDPMFile ioDPM(&dpm);
   if (readAndSaveSameDir == true) {//keep running the same dynamics
     readState = true;
@@ -111,10 +120,9 @@ int main(int argc, char **argv) {
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   sigma = dpm.getMeanParticleSize();
   dpm.setEnergyCosts(ea, el, eb, ec);
-  if(tensionType == "tension") dpm.setTension(g0);
+  numVertices = dpm.getNumVertices();
   if(readState) ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim, initAngles);
   if(initAngles) dpm.initializeParticleAngles();
-  numVertices = dpm.getNumVertices();
   // output file
   energyFile = outDir + "energy.dat";
   ioDPM.openEnergyFile(energyFile);
@@ -133,6 +141,13 @@ int main(int argc, char **argv) {
   driving *= forceUnit;
   dpm.setSelfPropulsionParams(driving, tp);
   ioDPM.saveDriveParams(outDir, damping, Pe);
+  if(tensionType == "tension") {
+    gammaUnit = ec / sigma;
+    g0 *= gammaUnit;
+    dpm.setTension(g0);
+  } else if(tensionType == "adhesion") {
+    dpm.setAdhesionConstants(eAdh, Adhcut); // ec = sigma = 1
+  }
 
   // initialize integration scheme
   dpm.initLangevin(Tinject, damping, readState);

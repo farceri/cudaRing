@@ -1415,6 +1415,63 @@ __global__ void kernelCheckVertexLineInteraction(const double* pos, long* vertex
   	}
 }
 
+inline __device__ double calcAdhesiveGradAndEnergy(const double distance, const double radSum, const double avgAdh, double &epot) {
+	const double rc = WCAcut * radSum;          // WCA minimum, zero force
+	const double r1 = (1. + d_l1) * radSum;     // maximum attraction
+	const double r2 = (1. + d_l2) * radSum;     // end of attraction
+	epot = 0.0;
+	if (distance >= r2) return 0.0;
+	const double maxGrad = 2. * avgAdh / (r2 - rc);   // area under the triangle = d_eAdh
+	if (distance <= r1) {
+		epot = 0.5 * (-avgAdh + 0.5 * maxGrad * (distance - rc) * (distance - rc) / (r1 - rc));
+		return -maxGrad * (distance - rc) / (r1 - rc);
+	}
+	epot = -0.25 * maxGrad * (r2 - distance) * (r2 - distance) / (r2 - r1);
+	return -maxGrad * (r2 - distance) / (r2 - r1);
+}
+
+inline __device__ double addAdhesiveInteraction(const double* thisPos, const double* otherPos, const double radSum, const double avgAdh, double* currentForce, double* currentStress) {
+	double delta[MAXDIM];
+	auto distance = calcDeltaAndDistance(thisPos, otherPos, delta);
+	auto epot = 0.0;
+	auto gradMultiple = calcAdhesiveGradAndEnergy(distance, radSum, avgAdh, epot);
+	if (gradMultiple != 0.0) {
+		#pragma unroll (MAXDIM)
+		for (long dim = 0; dim < d_nDim; dim++) {
+			currentForce[dim] += gradMultiple * delta[dim] / distance;
+		}
+		currentStress[0] += 0.5 * delta[0] * gradMultiple * delta[0] / distance;
+		currentStress[1] += 0.5 * delta[1] * gradMultiple * delta[0] / distance;
+		currentStress[2] += 0.5 * delta[0] * gradMultiple * delta[1] / distance;
+		currentStress[3] += 0.5 * delta[1] * gradMultiple * delta[1] / distance;
+	}
+	return epot;
+}
+
+// add adhesion computed as vertex-vertex interaction
+__global__ void kernelAddVertexAdhesion(const double* rad, const double* pos, const double* omega0, double* force, double* energy, double* intStress) {
+  	long vertexId = blockIdx.x * blockDim.x + threadIdx.x;
+  	if (vertexId < d_numVertices) {
+    	auto otherRad = 0.0;
+		double thisPos[MAXDIM], otherPos[MAXDIM];
+		// we don't zero out the force because we always call this function
+		// after kernelCalcShapeForceEnergy where the force is zeroed out
+		getVertexPos(vertexId, pos, thisPos);
+    	auto thisRad = rad[vertexId];
+    	// interaction between vertices of neighbor particles
+    	for (long nListId = 0; nListId < d_maxNeighborListPtr[vertexId]; nListId++) {
+      		if(extractNeighbor(vertexId, nListId, pos, rad, otherPos, otherRad)) {
+				auto otherId = d_neighborListPtr[vertexId * d_neighborListSize + nListId];
+				auto radSum = thisRad + otherRad;
+				auto avgAdh = 0.5 * (omega0[vertexId] + omega0[otherId]);
+				energy[vertexId] += addAdhesiveInteraction(thisPos, otherPos, radSum, avgAdh, &force[vertexId*d_nDim], &intStress[vertexId*4]);
+				//if(calcOverlap(thisPos, otherPos, radSum) > 0) printf("\n vertexId %ld \t neighbor: %ld \t overlap %lf \t %lf \t distance: %lf \t radSum: %lf \t thisRad: %lf \t otherRad: %lf \n", vertexId, d_neighborListPtr[vertexId*d_neighborListSize + nListId], calcOverlap(thisPos, otherPos, radSum), 1-calcDistance(thisPos, otherPos)/radSum, calcDistance(thisPos, otherPos), radSum, thisRad, otherRad);
+				//printf("interaction: vertexId %ld \t neighborId %ld \t fx: %e \t fy: %e \t overlap: %e \n", vertexId, d_neighborListPtr[vertexId*d_neighborListSize + nListId], force[vertexId*d_nDim], force[vertexId*d_nDim+1], calcOverlap(thisPos, otherPos, radSum));
+			}
+		}
+  	}
+}
+
 // particle-particle contact interaction
 __global__ void kernelCalcParticleInteraction(const double* pRad, const double* pPos, double* pForce, double* pEnergy, double* pStress) {
   	long particleId = blockIdx.x * blockDim.x + threadIdx.x;

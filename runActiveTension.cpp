@@ -5,8 +5,10 @@
 // Include C++ header files
 
 // Example usage
-// ./runTension /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02 <damping>=1e02 <g0Tau>=1e-01 <g0Delta>=1e02
-// <maxStep>=1e07 <initialStep>=0 <numParticles>=256 <mode>=0
+// ./runActiveTension /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02 <damping>=1e02 <magn>=10 <tau>=1e-01 <delta>=1e02
+// <maxStep>=1e07 <initialStep>=0 <numParticles>=256 activeType>=0 <mode>=0
+
+// active tension is reproduced in two ways: (1) UO on the segment tensions and (2) UO on vertex-vertex mutual adhesion
 
 #include "include/DPM2D.h"
 #include "include/FileIO.h"
@@ -32,15 +34,16 @@ int main(int argc, char **argv) {
   // runDynamics works with readAndSaveSameDir and saves all the dynamics (run and save dynamics)
   bool initTensions = false, readState = true, logSave = false, linSave = true, saveFinal = true, smooth = true;
   // input variables
-  std::string inDir = argv[1], adhesionType = argv[10], mode = argv[11];
-  double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]), g0Tau = atof(argv[5]), g0Delta = atof(argv[6]);
-  long maxStep = atof(argv[7]), initialStep = atof(argv[8]), numParticles = atol(argv[9]);
+  std::string inDir = argv[1], activeType = argv[11], mode = argv[12];
+  double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]);
+  double magn = atof(argv[5]), tau = atof(argv[6]), delta = atof(argv[7]);
+  long maxStep = atof(argv[8]), initialStep = atof(argv[9]), numParticles = atol(argv[10]);
   // other variables
   long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, multiple = 1, saveFreq = 1, updateCount = 0;
   long checkPointFreq = int(maxStep / 10), linFreq = int(checkPointFreq / 10), saveEnergyFreq = int(linFreq / 10);
   double cutDistance, cutoff = 0.5, timeUnit = 0, gammaUnit = 0, sigma, size, waveQ;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, Pe, l0Rest = 0.1, eAdh = 0.1, Adhcut = 0.4;
-  std::string outDir, energyFile, currentDir, dirSample, whichDynamics = "tension/";
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, Pe, l0Rest = 0.1, g0 = 10, eAdh = 0.1, Adhcut = 0.4;
+  std::string outDir, energyFile, currentDir, dirSample, whichDynamics;
   // set simulation mode
   if(mode == "change") {
     readAndMakeNewDir = true;
@@ -63,17 +66,27 @@ int main(int argc, char **argv) {
   }
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
-  dpm.setParticleType(simControlStruct::particleEnum::activeTension);
+  if(activeType == "adhesion") {
+    eAdh = magn;
+    dpm.setParticleType(simControlStruct::particleEnum::activeAdhesion);
+    whichDynamics = "adhesion/";
+    cout << "Adhesion is ON" << endl;
+  } else {
+    g0 = magn;
+    dpm.setParticleType(simControlStruct::particleEnum::activeTension);
+    whichDynamics = "tension/";
+    cout << "Tension is ON" << endl;
+  }
   dpm.setNoiseType(simControlStruct::noiseEnum::langevin);
-  if(adhesionType == "adhesion") dpm.setPotentialType(simControlStruct::potentialEnum::adhesivewca);
-  else dpm.setPotentialType(simControlStruct::potentialEnum::wca);
+  dpm.setPotentialType(simControlStruct::potentialEnum::wca);
   if(smooth) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
     dpm.setNeighborType(simControlStruct::neighborEnum::neighbor);
   }
   
   // set input and output
-  dirSample = whichDynamics + "tg" + argv[5] + "-dg" + argv[6] + "/";
+  if(activeType == "adhesion") dirSample = whichDynamics + "tw" + argv[5] + "-dw" + argv[6] + "/";
+  else dirSample = whichDynamics + "tg" + argv[5] + "-dg" + argv[6] + "/";
   ioDPMFile ioDPM(&dpm);
   if (readAndSaveSameDir == true) {//keep running the same dynamics
     readState = true;
@@ -105,10 +118,8 @@ int main(int argc, char **argv) {
   cout << "inDir: " << inDir << endl << "outDir: " << outDir << endl;
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   dpm.setEnergyCosts(ea, el, eb, ec);
-  dpm.setTension(g0);
-  if(readState) ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim, false, initTensions);
-  if(initTensions) dpm.initializeTensions();
   numVertices = dpm.getNumVertices();
+  if(readState) ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim, false, initTensions);
   // output file
   energyFile = outDir + "energy.dat";
   ioDPM.openEnergyFile(energyFile);
@@ -120,13 +131,29 @@ int main(int argc, char **argv) {
   timeStep = dpm.setTimeStep(timeStep * timeUnit);
   cout << "Units - time: " << timeUnit << " space: " << sigma << " time step: " << timeStep << endl;
   cout << "Thermostat - damping: " << damping << " Tinject: " << Tinject << endl;
-  Pe = g0Delta * l0Rest / el;
-  cout << "Activity - tau_g0: " << g0Tau << " delta_g0: " << g0Delta << " Pe = delta_g0 * l0 / el: " << Pe << endl;
+  if(activeType == "adhesion") {
+    Pe = delta / Tinject;
+    cout << "Active adhesion - tau_w0: " << tau << " delta_w0: " << delta << " Pe = delta_w0 / Tinject: " << Pe << endl;
+    delta *= ec; // energy unit
+  } else {
+    Pe = delta * l0Rest / el;
+    cout << "Active tension - tau_g0: " << tau << " delta_g0: " << delta << " Pe = delta_g0 * l0 / el: " << Pe << endl;
+    delta *= gammaUnit;
+  }
   damping /= timeUnit;
-  g0Tau *= timeUnit;
-  g0Delta *= gammaUnit;
-  dpm.setActiveTensionParams(g0Tau, g0Delta);
+  tau *= timeUnit;
   ioDPM.saveDriveParams(outDir, damping, Pe);
+  if(activeType == "adhesion") {
+    dpm.setAdhesionConstants(eAdh, Adhcut, false); // ec = sigma = 1
+    if(initTensions) dpm.initializeAdhesions();
+    dpm.setActiveAdhesionParams(tau, delta);
+  } else {
+    gammaUnit = ec / sigma;
+    g0 *= gammaUnit;
+    dpm.setTension(g0, false);
+    if(initTensions) dpm.initializeTensions();
+    dpm.setActiveTensionParams(tau, delta);
+  }
 
   // initialize integration scheme
   dpm.initLangevin(Tinject, damping, readState);
@@ -151,7 +178,7 @@ int main(int argc, char **argv) {
     if(step % saveEnergyFreq == 0) {
       ioDPM.saveDeformableEnergy(step, timeStep, numVertices);
       if(step % checkPointFreq == 0) {
-        cout << "Active Tension: current step: " << step;
+        cout << "Active " << activeType << ": current step: " << step;
         cout << " E/N: " << dpm.getEnergy() / numVertices;
         cout << " T: " << dpm.getTemperature();
         cout << " Ks/Kc: " << dpm.getShapeCOMEnergyRatio();

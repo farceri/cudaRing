@@ -28,41 +28,43 @@ int main(int argc, char **argv) {
   // variables
   bool readState = true, saveFinal = true, smooth = true;
   // input variables
-  std::string inDir = argv[1], noiseType = argv[9], potType = argv[10], tensionType = argv[11];
+  std::string inDir = argv[1], potType = argv[10], tensionType = argv[11];
   double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]);
-  double omega = atof(argv[5]), maxStrain = atof(argv[6]);
-  long maxStep, numCycles = atol(argv[7]), numParticles = atol(argv[8]);
+  double magn = atof(argv[5]), omega = atof(argv[6]), maxStrain = atof(argv[7]);
+  long maxStep, numCycles = atol(argv[8]), numParticles = atol(argv[8]);
   // other variables
-  long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0, checkPointFreq = int(maxStep / 10);
-  double cutDistance, cutoff = 0.5, timeUnit = 0, sigma, size, strain, saveStrain = 0.002;
-  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10;
-  long strainIndex, saveStrainFreq = std::lround(saveStrain / strainStep);   // e.g. strainStep = 1e-4 -> 10
+  long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0;
+  long checkPointFreq = int(maxStep / 10), cycleStep, cycleIndex, saveFreq;
+  double cutDistance, cutoff = 0.5, timeUnit, gammaUnit, sigma, size, strain, prevStrain;
+  double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, eAdh = 0.1, Adhcut = 0.4;
   std::string outDir, energyFile, shearFile, currentDir, dirSample, whichDynamics = "oshear";
   // simulation mode
   cout << "Oscillatory shear simulation - strain amplitude: " << maxStrain << " omega: " << omega << endl;
   // initialize dpm object
   DPM2D dpm(numParticles, nDim, numVertexPerParticle);
   dpm.setGeometryType(simControlStruct::geometryEnum::leesEdwards);
-  if(noiseType == "brownian") {
-    dpm.setNoiseType(simControlStruct::noiseEnum::brownian);
-  } else if(noiseType == "driven") {
-    dpm.setNoiseType(simControlStruct::noiseEnum::drivenBrownian);
-  } else {
-    cout << "Setting default langevin noise" << endl;
-  }
+  dpm.setNoiseType(simControlStruct::noiseEnum::langevin);
   if(potType == "lj") {
     dpm.setPotentialType(simControlStruct::potentialEnum::lennardJones);
     dpm.setLJcutoff(LJcut);
   } else if(potType == "wca") {
     dpm.setPotentialType(simControlStruct::potentialEnum::wca);
+  } else if(potType == "adhesivewca") {
+    dpm.setPotentialType(simControlStruct::potentialEnum::adhesivewca);
+    whichDynamics = whichDynamics + "-adh";
   } else {
     cout << "Setting default harmonic potential" << endl;
   }
   if(tensionType == "tension") {
+    g0 = magn;
     dpm.setTensionType(simControlStruct::tensionEnum::on);
-    cout << "Tension is ON" << endl;
+    cout << "Tension is ON, g0: " << g0 << endl;
+  } else if(tensionType == "adhesion") {
+    eAdh = magn;
+    dpm.setAdhesionType(simControlStruct::adhesionEnum::on);
+    cout << "Adhesion is ON, eAdh: " << eAdh << endl;
   } else {
-    cout << "Tension is OFF" << endl;
+    whichDynamics = whichDynamics + "/";
   }
   if(smooth) {
     dpm.setInteractionType(simControlStruct::interactionEnum::vertexSmooth);
@@ -70,7 +72,7 @@ int main(int argc, char **argv) {
   }
   
   // set input and output
-  dirSample = whichDynamics + argv[5] + "/";
+  dirSample = whichDynamics + argv[6] + "/";
   ioDPMFile ioDPM(&dpm);
   if(std::experimental::filesystem::exists(inDir + dirSample) == false) {
     std::experimental::filesystem::create_directory(inDir + dirSample);
@@ -80,9 +82,8 @@ int main(int argc, char **argv) {
   cout << "inDir: " << inDir << endl << "outDir: " << outDir << endl;
   ioDPM.readPackingFromDirectory(inDir, numParticles, nDim);
   dpm.setEnergyCosts(ea, el, eb, ec);
-  if(tensionType == "tension") dpm.setTension(g0);
-  if(readState == true) ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
   numVertices = dpm.getNumVertices();
+  if(readState == true) ioDPM.readState(inDir, numParticles, dpm.getNumVertices(), nDim);
   // output files
   energyFile = outDir + "energy.dat";
   ioDPM.openEnergyFile(energyFile);
@@ -98,8 +99,19 @@ int main(int argc, char **argv) {
   timeStep = dpm.setTimeStep(timeStep);
   damping /= timeUnit;
   ioDPM.saveDriveParams(outDir, damping);
-  maxStep = 2 * np.pi * numCycles / (omega * timeStep);
-  cout << "Oscillatory shear - number of cycles: " << numCycles << " number of simulation steps: " << maxStep << endl;
+  if(tensionType == "tension") {
+    gammaUnit = ec / sigma;
+    g0 *= gammaUnit;
+    dpm.setTension(g0);
+  } else if(tensionType == "adhesion") {
+    dpm.setAdhesionConstants(eAdh, Adhcut); // ec = sigma = 1
+  }
+  cycleStep = PI / (omega * timeStep);
+  maxStep = cycleStep * numCycles;
+  cout << "Oscillatory shear - number of cycles: " << numCycles << " number of simulation steps: " << maxStep;
+  cout << " number of simulation steps per cycle: " << cycleStep << endl;
+  saveFreq = int(cycleStep / 100);
+
 
   // initialize integration scheme
   dpm.initLangevin(Tinject, damping, readState);
@@ -142,8 +154,15 @@ int main(int argc, char **argv) {
       cout << " T: " << dpm.getTemperature();
       cout << " phi: " << dpm.getPhi() << endl << endl;
     }
-    if(linSave == true && (step % linFreq) == 0) {
-      currentDir = outDir + "/t" + std::to_string(step) + "/";
+    if(cycleIndex == 0 && (step % saveFreq) == 0) {
+      currentDir = outDir + "/first-t" + std::to_string(step) + "/";
+      std::experimental::filesystem::create_directory(currentDir);
+      ioDPM.saveState(currentDir);
+      ioDPM.saveContacts(currentDir);
+      ioDPM.saveStrainInfo(currentDir, strain, cycleIndex);
+    }
+    if(cycleIndex == (numCycles - 1) && (step % saveFreq) == 0) {
+      currentDir = outDir + "/last-t" + std::to_string(step) + "/";
       std::experimental::filesystem::create_directory(currentDir);
       ioDPM.saveState(currentDir);
       ioDPM.saveContacts(currentDir);
