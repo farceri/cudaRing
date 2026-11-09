@@ -5,8 +5,8 @@
 // Include C++ header files
 
 // Example usage
-// ./runNVT /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02> <damping>=1e-02 <strainStep>=1e-03 <maxStrain>=0.2
-// <maxStep>=1e07 <numParticles>=256 <noiseType>=langevin <potType=wca <tensionType>=off
+// ./runNVT /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02> <damping>=1e-02 <magn>=10
+// <omega>=1 <maxStrain>=0.2 <numCycles>=60 <numParticles>=256 <potType=wca <tensionType>=0
 
 #include "include/DPM2D.h"
 #include "include/FileIO.h"
@@ -31,11 +31,11 @@ int main(int argc, char **argv) {
   std::string inDir = argv[1], potType = argv[10], tensionType = argv[11];
   double timeStep = atof(argv[2]), Tinject = atof(argv[3]), damping = atof(argv[4]);
   double magn = atof(argv[5]), omega = atof(argv[6]), maxStrain = atof(argv[7]);
-  long maxStep, numCycles = atol(argv[8]), numParticles = atol(argv[8]);
+  long maxStep, numCycles = atol(argv[8]), numParticles = atol(argv[9]);
   // other variables
-  long nDim = 2, numVertexPerParticle = 32, numVertices, step = 0;
+  long nDim = 2, numVertexPerParticle = 32, numVertices, step = 1;
   long checkPointFreq = int(maxStep / 10), cycleStep, cycleIndex, saveFreq;
-  double cutDistance, cutoff = 0.5, timeUnit, gammaUnit, sigma, size, strain, prevStrain;
+  double cutDistance, cutoff = 0.5, timeUnit, gammaUnit, sigma, size, strain, prevStrain, strainStep;
   double ea = 1e05, el = 20, eb = 10, ec = 1, LJcut = 1.5, g0 = 10, eAdh = 0.1, Adhcut = 0.4;
   std::string outDir, energyFile, shearFile, currentDir, dirSample, whichDynamics = "oshear";
   // simulation mode
@@ -112,7 +112,6 @@ int main(int argc, char **argv) {
   cout << " number of simulation steps per cycle: " << cycleStep << endl;
   saveFreq = int(cycleStep / 100);
 
-
   // initialize integration scheme
   dpm.initLangevin(Tinject, damping, readState);
   size = 2 * dpm.getMeanVertexRadius();
@@ -133,9 +132,11 @@ int main(int argc, char **argv) {
   while(step != maxStep) {
     // apply oscillatory strain
     strain = maxStrain * sin(omega * step * timeStep);
-    dpm.setLEstrain(strain);
-    dpm.applyLEStrain(strain - prevStrain); // apply strain difference
+    strainStep = strain - prevStrain;
     prevStrain = strain;
+    dpm.setLEstrain(strain);
+    cout << "Step: " << step << " strain: " << strain << " strainStep: " << strainStep << endl;
+    dpm.applyLEStrain(strainStep); // apply strain difference
     //dpm.calcNeighbors(cutDistance);
     //dpm.calcForceEnergy();
     // run dynamics
