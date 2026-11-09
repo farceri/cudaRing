@@ -5,7 +5,7 @@
 // Include C++ header files
 
 // Example usage
-// ./runNVT /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02> <damping>=1e-02 <magn>=10
+// ./shearNVT /dirPath/0.920/ <timstep>=1e-04 <Tinject>=1e-02> <damping>=1e-02 <magn>=10
 // <strainStep>=1e-03 <maxStrain>=0.2 <numCycles>=60 <numParticles>=256 <potType=wca <tensionType>=0
 
 #include "include/DPM2D.h"
